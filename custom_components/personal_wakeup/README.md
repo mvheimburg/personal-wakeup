@@ -1,3 +1,4 @@
 # Personal Wakeup
 
-See the repository root README for installation and usage details.
+See the repository root README for the alarm lifecycle, services, events and
+installation.

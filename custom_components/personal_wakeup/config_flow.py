@@ -5,63 +5,67 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers.selector import selector
 
 from .const import (
-    DOMAIN,
     CONF_LIGHT_ENTITY,
     CONF_MA_PLAYER_ENTITY,
     CONF_PERSON_ENTITY,
-    CONF_REQUIRE_HOME,
     CONF_PLAYLIST_OPTIONS,
+    CONF_REQUIRE_HOME,
+    DOMAIN,
 )
-
 from .utils import normalize_playlists
 
 DEFAULT_NAME = "Wakeup Alarm"
 DEFAULT_REQUIRE_HOME = False
 
 
-
-def _base_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
-    
+def _base_schema(
+    defaults: dict[str, Any] | None = None, *, include_require_home: bool
+) -> vol.Schema:
     defaults = defaults or {}
+    playlists_default_str = ",".join(normalize_playlists(defaults.get(CONF_PLAYLIST_OPTIONS, [])))
 
-    raw = defaults.get(CONF_PLAYLIST_OPTIONS, [])
-    playlists_default_list = normalize_playlists(raw)
-    playlists_default_str = ",".join(playlists_default_list)
-
-
-
-    return vol.Schema(
-        {
-            vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, DEFAULT_NAME)): str,
-            vol.Required(
-                CONF_LIGHT_ENTITY,
-                default=defaults.get(CONF_LIGHT_ENTITY),
-            ): selector({"entity": {"domain": "light"}}),
-            vol.Required(
-                CONF_MA_PLAYER_ENTITY,
-                default=defaults.get(CONF_MA_PLAYER_ENTITY),
-            ): selector({"entity": {"domain": "media_player"}}),
-            vol.Optional(
-                CONF_PERSON_ENTITY,
-                default=defaults.get(CONF_PERSON_ENTITY),
-            ): selector({"entity": {"domain": "person"}}),
+    fields: dict[Any, Any] = {
+        vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, DEFAULT_NAME)): str,
+        vol.Required(CONF_LIGHT_ENTITY, default=defaults.get(CONF_LIGHT_ENTITY)): selector(
+            {"entity": {"domain": "light"}}
+        ),
+        vol.Required(CONF_MA_PLAYER_ENTITY, default=defaults.get(CONF_MA_PLAYER_ENTITY)): selector(
+            {"entity": {"domain": "media_player"}}
+        ),
+        vol.Optional(CONF_PERSON_ENTITY, default=defaults.get(CONF_PERSON_ENTITY)): selector(
+            {"entity": {"domain": "person"}}
+        ),
+    }
+    if include_require_home:
+        # Only the initial value: afterwards require_home is a runtime setting
+        # controlled from the card / set_config service.
+        fields[
             vol.Required(
                 CONF_REQUIRE_HOME,
                 default=defaults.get(CONF_REQUIRE_HOME, DEFAULT_REQUIRE_HOME),
-            ): selector({"boolean": {}}),
-            vol.Optional(
-                CONF_PLAYLIST_OPTIONS,
-                default=playlists_default_str,
-            ): str,
-        }
-    )
+            )
+        ] = selector({"boolean": {}})
+    fields[vol.Optional(CONF_PLAYLIST_OPTIONS, default=playlists_default_str)] = str
+    return vol.Schema(fields)
+
+
+def _validate(user_input: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
+    """Return (errors, options) for a submitted form."""
+    errors: dict[str, str] = {}
+    if not user_input.get(CONF_LIGHT_ENTITY):
+        errors["base"] = "no_light_entity"
+    elif not user_input.get(CONF_MA_PLAYER_ENTITY):
+        errors["base"] = "no_player_entity"
+
+    options = {k: v for k, v in user_input.items() if k not in (CONF_NAME, CONF_PLAYLIST_OPTIONS)}
+    options[CONF_PLAYLIST_OPTIONS] = normalize_playlists(user_input.get(CONF_PLAYLIST_OPTIONS))
+    return errors, options
 
 
 class PersonalWakeupConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -69,45 +73,25 @@ class PersonalWakeupConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ):
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input.get(CONF_LIGHT_ENTITY):
-                errors["base"] = "no_light_entity"
-            elif not user_input.get(CONF_MA_PLAYER_ENTITY):
-                errors["base"] = "no_player_entity"
-            else:
-                playlists = normalize_playlists(user_input.get(CONF_PLAYLIST_OPTIONS))
-                name = user_input[CONF_NAME]
-                options = {
-                    k: v
-                    for k, v in user_input.items()
-                    if k not in (CONF_NAME, CONF_PLAYLIST_OPTIONS)
-                }
-                options[CONF_PLAYLIST_OPTIONS] = playlists
-
+            errors, options = _validate(user_input)
+            if not errors:
                 return self.async_create_entry(
-                    title=name,
-                    data={},
-                    options=options,
+                    title=user_input[CONF_NAME], data={}, options=options
                 )
 
-        defaults: dict[str, Any] = {CONF_NAME: DEFAULT_NAME}
         return self.async_show_form(
             step_id="user",
-            data_schema=_base_schema(defaults),
+            data_schema=_base_schema({CONF_NAME: DEFAULT_NAME}, include_require_home=True),
             errors=errors,
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> "PersonalWakeupOptionsFlow":
+    def async_get_options_flow(config_entry: ConfigEntry) -> PersonalWakeupOptionsFlow:
         return PersonalWakeupOptionsFlow(config_entry)
 
 
@@ -117,38 +101,24 @@ class PersonalWakeupOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
 
-    async def async_step_init(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if not user_input.get(CONF_LIGHT_ENTITY):
-                errors["base"] = "no_light_entity"
-            elif not user_input.get(CONF_MA_PLAYER_ENTITY):
-                errors["base"] = "no_player_entity"
-            else:
-                playlists = normalize_playlists(user_input.get(CONF_PLAYLIST_OPTIONS))
-                name = user_input[CONF_NAME]
-                options = {
-                    k: v
-                    for k, v in user_input.items()
-                    if k not in (CONF_NAME, CONF_PLAYLIST_OPTIONS)
-                }
-                options[CONF_PLAYLIST_OPTIONS] = playlists
-
-                return self.async_create_entry(
-                    title=name,
-                    data=options,
+            errors, options = _validate(user_input)
+            if not errors:
+                # Preserve the initial require_home so a fresh entity without
+                # restore state still gets a sensible default.
+                if CONF_REQUIRE_HOME in self._entry.options:
+                    options[CONF_REQUIRE_HOME] = self._entry.options[CONF_REQUIRE_HOME]
+                self.hass.config_entries.async_update_entry(
+                    self._entry, title=user_input[CONF_NAME]
                 )
+                return self.async_create_entry(title="", data=options)
 
-        current = {**self._entry.options}
-        current.setdefault(CONF_NAME, self._entry.title)
-        current.setdefault(CONF_REQUIRE_HOME, DEFAULT_REQUIRE_HOME)
-
+        current = {**self._entry.options, CONF_NAME: self._entry.title}
         return self.async_show_form(
             step_id="init",
-            data_schema=_base_schema(current),
+            data_schema=_base_schema(current, include_require_home=False),
             errors=errors,
         )

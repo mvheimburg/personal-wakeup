@@ -1,0 +1,28 @@
+[project]
+name = "personal-wakeup"
+version = "0.2.0"
+description = "Home Assistant integration: wake-up light and music alarm with snooze, stop and weekday schedule."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "mvheimburg" }]
+
+[project.urls]
+Homepage = "https://github.com/mvheimburg/personal_wakeup_hacs"
+Issues = "https://github.com/mvheimburg/personal_wakeup_hacs/issues"
+
+# The version above is the release source of truth. CI verifies that
+# custom_components/personal_wakeup/manifest.json carries the same version,
+# and the release workflow tags v<version> when it changes on main.
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

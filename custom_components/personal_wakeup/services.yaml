@@ -1,32 +1,56 @@
 set_config:
   name: Set config
-  description: Update runtime settings for a Personal Wakeup entity.
+  description: Update runtime settings for a Personal Wakeup alarm.
+  target:
+    entity:
+      integration: personal_wakeup
+      domain: sensor
   fields:
-    entity_id:
-      name: Wakeup entity
-      description: Target Personal Wakeup sensor entity.
-      selector:
-        entity:
-          integration: personal_wakeup
-          domain: sensor
-          multiple: false
     enabled:
       name: Enabled
-      description: Enable or disable the alarm schedule.
+      description: Enable or disable the alarm schedule. Disabling stops an active alarm.
       selector:
         boolean:
     time_of_day:
       name: Alarm time
-      description: Local time when the alarm should fire.
+      description: Local time when the light starts fading in.
       selector:
         time:
+    weekdays:
+      name: Weekdays
+      description: Days on which the alarm fires. Empty means every day.
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+    skip_next:
+      name: Skip next
+      description: Skip only the next occurrence, then resume the normal schedule.
+      selector:
+        boolean:
     fade_duration:
-      name: Fade duration
-      description: Light fade duration in seconds.
+      name: Light fade duration
+      description: Seconds for the light to reach full brightness.
       selector:
         number:
           min: 1
           max: 7200
+          mode: box
+          unit_of_measurement: seconds
+    fade_music_duration:
+      name: Music fade duration
+      description: Seconds for the music to reach the target volume. The ramp is centred on the moment the light reaches full brightness.
+      selector:
+        number:
+          min: 1
+          max: 3600
           mode: box
           unit_of_measurement: seconds
     volume:
@@ -40,7 +64,7 @@ set_config:
           mode: slider
     playlist:
       name: Playlist
-      description: Playlist URI or identifier configured for this wakeup.
+      description: Playlist URI or identifier (must be one of the configured options if any).
       selector:
         text:
     require_home:
@@ -48,35 +72,44 @@ set_config:
       description: Only run automatically when the configured person is home.
       selector:
         boolean:
+    snooze_minutes:
+      name: Default snooze
+      description: Snooze duration used when the snooze service is called without one.
+      selector:
+        number:
+          min: 1
+          max: 240
+          mode: box
+          unit_of_measurement: minutes
+    auto_off_minutes:
+      name: Auto off
+      description: Minutes the alarm keeps ringing before it switches off by itself.
+      selector:
+        number:
+          min: 1
+          max: 720
+          mode: box
+          unit_of_measurement: minutes
 
 trigger_now:
   name: Trigger now
-  description: Start the wakeup routine immediately.
-  fields:
-    entity_id:
-      name: Wakeup entity
-      description: Target Personal Wakeup sensor entity.
-      selector:
-        entity:
-          integration: personal_wakeup
-          domain: sensor
-          multiple: false
+  description: Start the wakeup routine immediately, ignoring presence.
+  target:
+    entity:
+      integration: personal_wakeup
+      domain: sensor
 
 snooze:
   name: Snooze
-  description: Stop the current wakeup run and re-trigger it after a short delay.
+  description: Silence the alarm and ring again after a short delay. The light stays on.
+  target:
+    entity:
+      integration: personal_wakeup
+      domain: sensor
   fields:
-    entity_id:
-      name: Wakeup entity
-      description: Target Personal Wakeup sensor entity.
-      selector:
-        entity:
-          integration: personal_wakeup
-          domain: sensor
-          multiple: false
     duration_minutes:
       name: Snooze duration
-      description: Number of minutes before the wakeup routine runs again.
+      description: Minutes until the alarm rings again. Defaults to the entity's snooze_minutes.
       selector:
         number:
           min: 1
@@ -86,13 +119,8 @@ snooze:
 
 stop:
   name: Stop
-  description: Stop the current wakeup run and cancel any active snooze.
-  fields:
-    entity_id:
-      name: Wakeup entity
-      description: Target Personal Wakeup sensor entity.
-      selector:
-        entity:
-          integration: personal_wakeup
-          domain: sensor
-          multiple: false
+  description: Stop the alarm or cancel a pending snooze, then arm the next occurrence.
+  target:
+    entity:
+      integration: personal_wakeup
+      domain: sensor

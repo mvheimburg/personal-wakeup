@@ -1,0 +1,65 @@
+name: Release
+
+# Every push to main whose pyproject.toml version has no matching tag yet
+# gets tagged v<version> and published as a GitHub release (HACS picks up
+# releases automatically). Bump the version in pyproject.toml AND
+# manifest.json to cut a release.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - pyproject.toml
+      - custom_components/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag v$v already exists; nothing to release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release archive
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          cd custom_components/personal_wakeup
+          zip -r "${GITHUB_WORKSPACE}/personal_wakeup.zip" . -x '__pycache__/*' '*.pyc'
+
+      - name: Tag and publish release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" personal_wakeup.zip \
+            --title "v$VERSION" \
+            --generate-notes

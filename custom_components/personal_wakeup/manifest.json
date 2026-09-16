@@ -1,19 +1,14 @@
 {
   "domain": "personal_wakeup",
   "name": "Personal WakeUp",
-  "version": "0.1.0",
-  "codeowners": [
-    "@mvheimburg"
-  ],
+  "codeowners": ["@mvheimburg"],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/mvheimburg/personal_wakeup_hacs",
+  "integration_type": "service",
+  "iot_class": "calculated",
   "issue_tracker": "https://github.com/mvheimburg/personal_wakeup_hacs/issues",
-  "homekit": {},
-  "integration_type": "hub",
-  "iot_class": "local_push",
   "quality_scale": "bronze",
   "requirements": [],
-  "ssdp": [],
-  "zeroconf": []
+  "version": "0.2.0"
 }

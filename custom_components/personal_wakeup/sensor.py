@@ -1,21 +1,30 @@
+"""Sensor platform: one status entity per config entry plus entity services."""
+
 from __future__ import annotations
 
 import logging
 
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .alarm import WakeupAlarmEntity
 from .const import (
-    DEFAULT_SNOOZE_MINUTES,
-    DATA_ALARM_ENTITIES,
-    DATA_SERVICES_REGISTERED,
-    DOMAIN,
+    ATTR_AUTO_OFF_MINUTES,
+    ATTR_DURATION_MINUTES,
+    ATTR_ENABLED,
+    ATTR_FADE_DURATION,
+    ATTR_FADE_MUSIC_DURATION,
+    ATTR_PLAYLIST,
+    ATTR_REQUIRE_HOME,
+    ATTR_SKIP_NEXT,
+    ATTR_SNOOZE_MINUTES,
+    ATTR_TIME_OF_DAY,
+    ATTR_VOLUME,
+    ATTR_WEEKDAYS,
     SERVICE_SET_CONFIG,
     SERVICE_SNOOZE,
     SERVICE_STOP,
@@ -24,157 +33,23 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-SET_CONFIG_SCHEMA = vol.Schema(
-    {
-        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Optional("enabled"): cv.boolean,
-        vol.Optional("time_of_day"): vol.Any(cv.time, cv.string),
-        vol.Optional("fade_duration"): vol.All(vol.Coerce(int), vol.Range(min=1)),
-        vol.Optional("volume"): vol.All(
-            vol.Coerce(float), vol.Range(min=0, max=1)
-        ),
-        vol.Optional("playlist"): cv.string,
-        vol.Optional("require_home"): cv.boolean,
-    },
-    extra=vol.PREVENT_EXTRA,
-)
+SET_CONFIG_FIELDS = {
+    vol.Optional(ATTR_ENABLED): cv.boolean,
+    vol.Optional(ATTR_TIME_OF_DAY): vol.Any(cv.time, cv.string),
+    vol.Optional(ATTR_WEEKDAYS): cv.weekdays,
+    vol.Optional(ATTR_SKIP_NEXT): cv.boolean,
+    vol.Optional(ATTR_FADE_DURATION): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    vol.Optional(ATTR_FADE_MUSIC_DURATION): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    vol.Optional(ATTR_VOLUME): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+    vol.Optional(ATTR_PLAYLIST): cv.string,
+    vol.Optional(ATTR_REQUIRE_HOME): cv.boolean,
+    vol.Optional(ATTR_SNOOZE_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=1, max=240)),
+    vol.Optional(ATTR_AUTO_OFF_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=1, max=720)),
+}
 
-TRIGGER_NOW_SCHEMA = vol.Schema(
-    {
-        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-    },
-    extra=vol.PREVENT_EXTRA,
-)
-
-SNOOZE_SCHEMA = vol.Schema(
-    {
-        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Optional("duration_minutes", default=DEFAULT_SNOOZE_MINUTES): vol.All(
-            vol.Coerce(int),
-            vol.Range(min=1, max=240),
-        ),
-    },
-    extra=vol.PREVENT_EXTRA,
-)
-
-STOP_SCHEMA = vol.Schema(
-    {
-        vol.Optional(ATTR_ENTITY_ID): cv.entity_id,
-    },
-    extra=vol.PREVENT_EXTRA,
-)
-
-
-def _get_entities(hass: HomeAssistant) -> dict[str, WakeupAlarmEntity]:
-    """Return runtime entity registry for this integration."""
-    domain_data = hass.data.setdefault(DOMAIN, {})
-    return domain_data.setdefault(DATA_ALARM_ENTITIES, {})
-
-
-def _resolve_target_entity(
-    hass: HomeAssistant, service_data: dict
-) -> WakeupAlarmEntity | None:
-    """Resolve a service target from entity_id or single-entity fallback."""
-    entities = _get_entities(hass)
-    if not entities:
-        _LOGGER.warning("No Personal Wakeup entities available for service call")
-        return None
-
-    entity_id = service_data.get(ATTR_ENTITY_ID)
-    if entity_id:
-        for entity in entities.values():
-            if entity.entity_id == entity_id:
-                return entity
-
-        _LOGGER.warning(
-            "Ignoring Personal Wakeup service call for unknown entity_id=%s",
-            entity_id,
-        )
-        return None
-
-    if len(entities) == 1:
-        return next(iter(entities.values()))
-
-    _LOGGER.warning(
-        "Ignoring Personal Wakeup service call without entity_id because multiple entities exist"
-    )
-    return None
-
-
-def _register_services_once(hass: HomeAssistant) -> None:
-    """Register integration services exactly once."""
-    domain_data = hass.data.setdefault(DOMAIN, {})
-    if domain_data.get(DATA_SERVICES_REGISTERED):
-        return
-
-    async def handle_set_config(call: ServiceCall) -> None:
-        target = _resolve_target_entity(hass, dict(call.data))
-        if target is None:
-            return
-
-        data = dict(call.data)
-        data.pop(ATTR_ENTITY_ID, None)
-        await target.async_set_config(data)
-
-    async def handle_trigger_now(call: ServiceCall) -> None:
-        target = _resolve_target_entity(hass, dict(call.data))
-        if target is None:
-            return
-        await target.async_trigger()
-
-    async def handle_snooze(call: ServiceCall) -> None:
-        target = _resolve_target_entity(hass, dict(call.data))
-        if target is None:
-            return
-        await target.async_snooze(call.data["duration_minutes"])
-
-    async def handle_stop(call: ServiceCall) -> None:
-        target = _resolve_target_entity(hass, dict(call.data))
-        if target is None:
-            return
-        await target.async_stop()
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_CONFIG,
-        handle_set_config,
-        schema=SET_CONFIG_SCHEMA,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_TRIGGER_NOW,
-        handle_trigger_now,
-        schema=TRIGGER_NOW_SCHEMA,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SNOOZE,
-        handle_snooze,
-        schema=SNOOZE_SCHEMA,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_STOP,
-        handle_stop,
-        schema=STOP_SCHEMA,
-    )
-
-    domain_data[DATA_SERVICES_REGISTERED] = True
-
-
-def _unregister_services_if_unused(hass: HomeAssistant) -> None:
-    """Unregister integration services when no entities are left."""
-    domain_data = hass.data.get(DOMAIN, {})
-    entities = domain_data.get(DATA_ALARM_ENTITIES, {})
-    if entities:
-        return
-
-    if domain_data.get(DATA_SERVICES_REGISTERED):
-        hass.services.async_remove(DOMAIN, SERVICE_SET_CONFIG)
-        hass.services.async_remove(DOMAIN, SERVICE_TRIGGER_NOW)
-        hass.services.async_remove(DOMAIN, SERVICE_SNOOZE)
-        hass.services.async_remove(DOMAIN, SERVICE_STOP)
-        domain_data[DATA_SERVICES_REGISTERED] = False
+SNOOZE_FIELDS = {
+    vol.Optional(ATTR_DURATION_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=1, max=240)),
+}
 
 
 async def async_setup_entry(
@@ -183,14 +58,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Personal Wakeup alarm entity from a config entry."""
-    entity = WakeupAlarmEntity(hass, entry)
-    async_add_entities([entity])
-    _get_entities(hass)[entry.entry_id] = entity
-    _register_services_once(hass)
+    async_add_entities([WakeupAlarmEntity(hass, entry)])
 
-    def _on_unload() -> None:
-        entities = _get_entities(hass)
-        entities.pop(entry.entry_id, None)
-        _unregister_services_if_unused(hass)
-
-    entry.async_on_unload(_on_unload)
+    # Entity services: HA resolves entity_id / device / area targets for us and
+    # registers each service only once per domain.
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_SET_CONFIG, SET_CONFIG_FIELDS, "async_set_config"
+    )
+    platform.async_register_entity_service(SERVICE_TRIGGER_NOW, None, "async_trigger")
+    platform.async_register_entity_service(SERVICE_SNOOZE, SNOOZE_FIELDS, "async_snooze")
+    platform.async_register_entity_service(SERVICE_STOP, None, "async_stop")
