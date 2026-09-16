@@ -6,10 +6,10 @@
   ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/mvheimburg/personal_wakeup_hacs",
+  "documentation": "https://github.com/mvheimburg/personal-wakeup",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/mvheimburg/personal_wakeup_hacs/issues",
+  "issue_tracker": "https://github.com/mvheimburg/personal-wakeup/issues",
   "quality_scale": "bronze",
   "requirements": [],
   "version": "0.2.1"

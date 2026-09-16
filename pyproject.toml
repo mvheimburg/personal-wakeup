@@ -8,8 +8,8 @@ requires-python = ">=3.12"
 authors = [{ name = "mvheimburg" }]
 
 [project.urls]
-Homepage = "https://github.com/mvheimburg/personal_wakeup_hacs"
-Issues = "https://github.com/mvheimburg/personal_wakeup_hacs/issues"
+Homepage = "https://github.com/mvheimburg/personal-wakeup"
+Issues = "https://github.com/mvheimburg/personal-wakeup/issues"
 
 # The version above is the release source of truth. CI verifies that
 # custom_components/personal_wakeup/manifest.json carries the same version,

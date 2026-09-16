@@ -4,7 +4,7 @@ A wake-up alarm for Home Assistant: a sunrise-style light fade, a Music
 Assistant playlist that fades in, and a real alarm-clock lifecycle with
 **stop**, **snooze**, weekday schedule, skip-next, presence check and auto-off.
 
-Pair it with the [Lovelace Personal Wakeup Card](https://github.com/mvheimburg/lovelace-personal-wakeup-card)
+Pair it with the [Lovelace Personal Wakeup Card](https://github.com/mvheimburg/lovelace-personal-wakeup)
 for a one-tap Stop / Snooze UI.
 
 ## How an alarm runs
