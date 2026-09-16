@@ -1,7 +1,9 @@
 {
   "domain": "personal_wakeup",
   "name": "Personal WakeUp",
-  "codeowners": ["@mvheimburg"],
+  "codeowners": [
+    "@mvheimburg"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/mvheimburg/personal_wakeup_hacs",
@@ -10,5 +12,5 @@
   "issue_tracker": "https://github.com/mvheimburg/personal_wakeup_hacs/issues",
   "quality_scale": "bronze",
   "requirements": [],
-  "version": "0.2.0"
+  "version": "0.2.1"
 }

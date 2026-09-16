@@ -1,6 +1,6 @@
 [project]
 name = "personal-wakeup"
-version = "0.2.0"
+version = "0.2.1"
 description = "Home Assistant integration: wake-up light and music alarm with snooze, stop and weekday schedule."
 readme = "README.md"
 license = { file = "LICENSE" }
