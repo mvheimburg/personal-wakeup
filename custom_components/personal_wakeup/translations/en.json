@@ -2,7 +2,8 @@
   "config": {
     "error": {
       "no_light_entity": "A light entity is required.",
-      "no_player_entity": "A media player entity is required."
+      "no_player_entity": "A media player entity is required.",
+      "invalid_wake_mode": "Choose lights, music, or both."
     },
     "step": {
       "user": {
@@ -11,9 +12,10 @@
           "name": "Name",
           "light_entity": "Light entity",
           "ma_player_entity": "Media player entity",
-          "person_entity": "Person entity",
-          "require_home": "Only trigger when person is home (initial value, change later from the card)",
-          "playlist_options": "Playlist options (comma-separated)"
+          "require_home": "Only trigger when any selected person is home (initial value)",
+          "playlist_options": "Playlist options (comma-separated)",
+          "person_entities": "People (any one at home)",
+          "wake_mode": "Wake with lights, music, or both"
         }
       }
     }
@@ -21,7 +23,8 @@
   "options": {
     "error": {
       "no_light_entity": "A light entity is required.",
-      "no_player_entity": "A media player entity is required."
+      "no_player_entity": "A media player entity is required.",
+      "invalid_wake_mode": "Choose lights, music, or both."
     },
     "step": {
       "init": {
@@ -29,8 +32,9 @@
           "name": "Name",
           "light_entity": "Light entity",
           "ma_player_entity": "Media player entity",
-          "person_entity": "Person entity",
-          "playlist_options": "Playlist options (comma-separated)"
+          "playlist_options": "Playlist options (comma-separated)",
+          "person_entities": "People (any one at home)",
+          "wake_mode": "Wake with lights, music, or both"
         }
       }
     }

@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_TRANSITION,
@@ -39,6 +40,7 @@ from .const import (
     ATTR_AUTO_OFF_MINUTES,
     ATTR_CAN_SNOOZE,
     ATTR_CAN_STOP,
+    ATTR_DAY_TIMES,
     ATTR_ENABLED,
     ATTR_FADE_DURATION,
     ATTR_FADE_MUSIC_DURATION,
@@ -59,9 +61,11 @@ from .const import (
     ATTR_WEEKDAYS,
     CONF_LIGHT_ENTITY,
     CONF_MA_PLAYER_ENTITY,
+    CONF_PERSON_ENTITIES,
     CONF_PERSON_ENTITY,
     CONF_PLAYLIST_OPTIONS,
     CONF_REQUIRE_HOME,
+    CONF_WAKE_MODE,
     DEFAULT_AUTO_OFF_MINUTES,
     DEFAULT_ENABLED,
     DEFAULT_FADE_DURATION,
@@ -86,6 +90,7 @@ from .const import (
     STATE_SNOOZED,
     STOPPABLE_STATES,
 )
+from .utils import selected_people, validate_day_times, validate_wiring
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -124,6 +129,7 @@ class WakeupConfig:
     enabled: bool = DEFAULT_ENABLED
     time_of_day: time = field(default_factory=lambda: _parse_time(DEFAULT_TIME_OF_DAY))
     weekdays: list[str] = field(default_factory=lambda: list(WEEKDAYS))
+    day_times: dict[str, str] = field(default_factory=dict)
     skip_next: bool = False
     fade_duration: int = DEFAULT_FADE_DURATION  # seconds
     fade_music_duration: int = DEFAULT_FADE_MUSIC_DURATION  # seconds
@@ -155,14 +161,10 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self._entry = entry
+        # Retain old wiring until a changed options entry has stopped its run.
+        self._options = dict(entry.options)
 
-        person_entity: str | None = entry.options.get(CONF_PERSON_ENTITY) or None
-        pretty_person: str | None = None
-        if person_entity and "." in person_entity:
-            pretty_person = person_entity.split(".", 1)[1].replace("_", " ").title()
-        self._attr_name = (
-            f"{pretty_person} wakeup" if pretty_person else (entry.title or "Wakeup Alarm")
-        )
+        self._attr_name = entry.title or "Wakeup Alarm"
         # Stable identity: never derive this from user-editable options.
         self._attr_unique_id = entry.entry_id
 
@@ -172,7 +174,6 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             require_home=bool(entry.options.get(CONF_REQUIRE_HOME, False)),
         )
 
-        self._person_entity = person_entity
         self._state: str = STATE_DISARMED
         self._next_fire: datetime | None = None
         self._skipped_fire: datetime | None = None
@@ -197,6 +198,9 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             ATTR_ENABLED: cfg.enabled,
             ATTR_TIME_OF_DAY: cfg.time_of_day.isoformat(timespec="minutes"),
             ATTR_WEEKDAYS: list(cfg.weekdays),
+            ATTR_DAY_TIMES: dict(cfg.day_times),
+            CONF_PERSON_ENTITIES: self._person_entities,
+            CONF_WAKE_MODE: self._wake_mode,
             ATTR_SKIP_NEXT: cfg.skip_next,
             ATTR_FADE_DURATION: cfg.fade_duration,
             ATTR_FADE_MUSIC_DURATION: cfg.fade_music_duration,
@@ -240,15 +244,40 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     # ------------------------------------------------------------------ #
 
     @property
+    def _person_entities(self) -> list[str]:
+        return selected_people(self._options)
+
+    @property
+    def _person_entity(self) -> str | None:
+        people = self._person_entities
+        return people[0] if people else None
+
+    @property
+    def _wake_mode(self) -> str:
+        return self._options.get(CONF_WAKE_MODE, "both")
+
+    @property
+    def _fade_seconds(self) -> float:
+        if self._wake_mode == "lights":
+            return self._config.fade_duration
+        if self._wake_mode == "music":
+            return self._config.fade_music_duration
+        music_end = (
+            max(0, self._config.fade_duration - self._config.fade_music_duration / 2)
+            + self._config.fade_music_duration
+        )
+        return max(self._config.fade_duration, music_end)
+
+    @property
     def _light_entity(self) -> str | None:
-        return self._entry.options.get(CONF_LIGHT_ENTITY) or None
+        return self._options.get(CONF_LIGHT_ENTITY) or None
 
     @property
     def _player_entity(self) -> str | None:
-        return self._entry.options.get(CONF_MA_PLAYER_ENTITY) or None
+        return self._options.get(CONF_MA_PLAYER_ENTITY) or None
 
     def _playlist_options(self) -> list[str]:
-        raw = self._entry.options.get(CONF_PLAYLIST_OPTIONS, [])
+        raw = self._options.get(CONF_PLAYLIST_OPTIONS, [])
         if not isinstance(raw, list):
             return []
         return [str(item).strip() for item in raw if str(item).strip()]
@@ -273,6 +302,12 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     def _apply_runtime_settings(self, data: dict[str, Any]) -> None:
         """Apply runtime settings from service data or restored attributes."""
         cfg = self._config
+
+        if ATTR_DAY_TIMES in data:
+            try:
+                cfg.day_times = validate_day_times(data[ATTR_DAY_TIMES])
+            except vol.Invalid:
+                _LOGGER.warning("Ignoring invalid restored day_times for %s", self.entity_id)
 
         if ATTR_ENABLED in data:
             cfg.enabled = bool(data[ATTR_ENABLED])
@@ -352,7 +387,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             if run_started is not None:
                 run_started = dt_util.as_utc(run_started)
                 deadline = run_started + timedelta(
-                    seconds=self._config.fade_duration + self._config.auto_off_minutes * 60
+                    seconds=self._fade_seconds + self._config.auto_off_minutes * 60
                 )
                 remaining = (deadline - now).total_seconds()
                 if remaining > 0:
@@ -384,9 +419,14 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         """Return the next `count` occurrences (UTC) matching time_of_day and weekdays."""
         cfg = self._config
         found: list[datetime] = []
-        for offset in range(0, 8 + count):
+        for offset in range(0, 7 * count + 1):
             day = now_local.date() + timedelta(days=offset)
-            candidate = datetime.combine(day, cfg.time_of_day, tzinfo=now_local.tzinfo)
+            day_time = (
+                _parse_time(cfg.day_times[WEEKDAYS[day.weekday()]])
+                if WEEKDAYS[day.weekday()] in cfg.day_times
+                else cfg.time_of_day
+            )
+            candidate = datetime.combine(day, day_time, tzinfo=now_local.tzinfo)
             if candidate <= now_local:
                 continue
             if WEEKDAYS[candidate.weekday()] not in cfg.weekdays:
@@ -471,10 +511,11 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     # ------------------------------------------------------------------ #
 
     def _person_is_home(self) -> bool:
-        if not self._person_entity:
-            return True
-        person_state = self.hass.states.get(self._person_entity)
-        return person_state is not None and person_state.state == STATE_HOME
+        return not self._person_entities or any(
+            (person_state := self.hass.states.get(person)) is not None
+            and person_state.state == STATE_HOME
+            for person in self._person_entities
+        )
 
     async def _start_run(
         self,
@@ -523,29 +564,29 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             self._fire_event(EVENT_TRIGGERED, resume=resume)
 
             try:
-                if resume:
-                    await asyncio.gather(
-                        self._ensure_light_on(),
-                        self._fade_music(resume=True),
-                    )
-                else:
-                    await asyncio.gather(self._fade_light(), self._fade_music())
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - keep ringing even if a fade failed
-                _LOGGER.exception("%s: error during fade-in", self.entity_id)
+                # A restored deadline includes the resume ramp itself.
+                async with asyncio.timeout(auto_off_seconds):
+                    try:
+                        if resume:
+                            await asyncio.gather(
+                                self._ensure_light_on(),
+                                self._fade_music(resume=True),
+                            )
+                        else:
+                            await asyncio.gather(self._fade_light(), self._fade_music())
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # noqa: BLE001 - keep ringing even if a fade failed
+                        _LOGGER.exception("%s: error during fade-in", self.entity_id)
 
-            self._set_state(STATE_RINGING)
-            self._fire_event(EVENT_RINGING)
+                    self._set_state(STATE_RINGING)
+                    self._fire_event(EVENT_RINGING)
 
-            timeout = (
-                auto_off_seconds
-                if auto_off_seconds is not None
-                else self._config.auto_off_minutes * 60
-            )
-            await asyncio.sleep(max(1.0, float(timeout)))
+                    await asyncio.sleep(self._config.auto_off_minutes * 60)
+            except TimeoutError:
+                pass
 
-            _LOGGER.info("%s: auto-off after %.0fs", self.entity_id, timeout)
+            _LOGGER.info("%s: auto-off", self.entity_id)
             await self._stop_music()
             self._fire_event(EVENT_AUTO_OFF)
             self._run_task = None
@@ -582,7 +623,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             return 0
 
     async def _ensure_light_on(self) -> None:
-        if not self._light_entity:
+        if self._wake_mode == "music" or not self._light_entity:
             return
         if self._current_brightness() >= MAX_BRIGHTNESS:
             return
@@ -590,6 +631,8 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
 
     async def _fade_light(self) -> None:
         """Fade the light from its current brightness to 100% over fade_duration."""
+        if self._wake_mode == "music":
+            return
         if not self._light_entity:
             _LOGGER.warning("%s: no light configured; skipping light fade", self.entity_id)
             return
@@ -647,7 +690,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
 
     async def _stop_music(self) -> None:
         """Stop playback. Blocking so it can never be overtaken by a queued play."""
-        if not self._player_entity:
+        if self._wake_mode == "lights" or not self._player_entity:
             return
         try:
             await self.hass.services.async_call(
@@ -666,6 +709,8 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         moment the light reaches full brightness (half before, half after).
         Resume (after a snooze): playback starts immediately with a short ramp.
         """
+        if self._wake_mode == "lights":
+            return
         if not self._player_entity:
             _LOGGER.warning("%s: no media player configured; skipping music", self.entity_id)
             return
@@ -676,8 +721,8 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             delay = 0.0
         else:
             light_duration = max(1, int(self._config.fade_duration))
-            ramp = int(self._config.fade_music_duration) or light_duration
-            delay = max(0.0, light_duration - ramp / 2.0)
+            ramp = max(1, int(self._config.fade_music_duration))
+            delay = max(0.0, light_duration - ramp / 2.0) if self._wake_mode == "both" else 0.0
 
         if delay > 0:
             _LOGGER.debug("%s: music starts in %.0fs", self.entity_id, delay)
@@ -710,16 +755,26 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         _LOGGER.debug("%s: set_config %s", self.entity_id, data)
         device_options = {
             key: data[key]
-            for key in (CONF_LIGHT_ENTITY, CONF_MA_PLAYER_ENTITY, CONF_PERSON_ENTITY)
+            for key in (
+                CONF_LIGHT_ENTITY,
+                CONF_MA_PLAYER_ENTITY,
+                CONF_PERSON_ENTITY,
+                CONF_PERSON_ENTITIES,
+                CONF_WAKE_MODE,
+            )
             if key in data
         }
+        if ATTR_DAY_TIMES in data:
+            validate_day_times(data[ATTR_DAY_TIMES])
+        if CONF_PERSON_ENTITIES in device_options:
+            device_options[CONF_PERSON_ENTITIES] = selected_people(device_options)
+        elif CONF_PERSON_ENTITY in device_options:
+            device_options[CONF_PERSON_ENTITIES] = selected_people(device_options)
+        validate_wiring({**self._options, **device_options})
         if device_options:
             # Options reload the entity; stop the original player before replacing it.
             if self._state in STOPPABLE_STATES:
                 await self.async_stop()
-            self.hass.config_entries.async_update_entry(
-                self._entry, options={**self._entry.options, **device_options}
-            )
         was_enabled = self._config.enabled
         self._apply_runtime_settings(data)
 
@@ -730,6 +785,15 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             # is deliberately left alone; the new settings apply afterwards.
             await self._reschedule()
         self._write()
+        if device_options:
+            self.hass.config_entries.async_update_entry(
+                self._entry, options={**self._options, **device_options}
+            )
+
+    async def async_prepare_options_reload(self) -> None:
+        """Stop the old enabled player before changed options are reloaded."""
+        if dict(self._entry.options) != self._options and self._state in STOPPABLE_STATES:
+            await self.async_stop()
 
     async def _disarm(self) -> None:
         """Disable: cancel everything, stop playback if we were making noise."""

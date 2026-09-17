@@ -6,19 +6,43 @@ set_config:
       integration: personal_wakeup
       domain: sensor
   fields:
+    wake_mode:
+      name: Wake mode
+      description: Enable lights, music, or both. Include required targets in the same call when changing mode.
+      selector:
+        select:
+          options:
+            - lights
+            - music
+            - both
+    person_entities:
+      name: People
+      description: Any selected person at home allows scheduled alarms. An empty list clears presence restrictions; takes precedence over person_entity.
+      selector:
+        entity:
+          domain: person
+          multiple: true
+    day_times:
+      name: Daily times
+      description: Weekday to HH:MM mapping (mon through sun). Missing days use time_of_day; an empty mapping clears overrides.
+      example: '{"mon": "06:30", "sat": "09:00"}'
+      selector:
+        object:
     light_entity:
       name: Wakeup light
+      description: Required for lights or both mode; may be cleared with an empty string in music mode.
       selector:
         entity:
           domain: light
     ma_player_entity:
       name: Music player
+      description: Required for music or both mode; may be cleared with an empty string in lights mode.
       selector:
         entity:
           domain: media_player
     person_entity:
       name: Person
-      description: Person used for presence checking. An empty string clears it.
+      description: Legacy single-person selection. An empty string clears it; use person_entities for multiple people.
       selector:
         entity:
           domain: person
@@ -29,7 +53,7 @@ set_config:
         boolean:
     time_of_day:
       name: Alarm time
-      description: Local time when the light starts fading in.
+      description: Default local start time for days without a day_times override.
       selector:
         time:
     weekdays:
@@ -62,7 +86,7 @@ set_config:
           unit_of_measurement: seconds
     fade_music_duration:
       name: Music fade duration
-      description: Seconds for the music to reach the target volume. The ramp is centred on the moment the light reaches full brightness.
+      description: Seconds for the music to reach the target volume. In both mode the ramp is centred on the moment the light reaches full brightness; music mode starts immediately.
       selector:
         number:
           min: 1
@@ -85,7 +109,7 @@ set_config:
         text:
     require_home:
       name: Require home
-      description: Only run automatically when the configured person is home.
+      description: Only run automatically when any selected person is home. No selection leaves presence unrestricted.
       selector:
         boolean:
     snooze_minutes:

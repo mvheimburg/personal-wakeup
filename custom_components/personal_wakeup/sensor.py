@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .alarm import WakeupAlarmEntity
 from .const import (
     ATTR_AUTO_OFF_MINUTES,
+    ATTR_DAY_TIMES,
     ATTR_DURATION_MINUTES,
     ATTR_ENABLED,
     ATTR_FADE_DURATION,
@@ -27,18 +28,25 @@ from .const import (
     ATTR_WEEKDAYS,
     CONF_LIGHT_ENTITY,
     CONF_MA_PLAYER_ENTITY,
+    CONF_PERSON_ENTITIES,
     CONF_PERSON_ENTITY,
+    CONF_WAKE_MODE,
     SERVICE_SET_CONFIG,
     SERVICE_SNOOZE,
     SERVICE_STOP,
     SERVICE_TRIGGER_NOW,
+    WAKE_MODES,
 )
+from .utils import validate_day_times
 
 _LOGGER = logging.getLogger(__name__)
 
 SET_CONFIG_FIELDS = {
-    vol.Optional(CONF_LIGHT_ENTITY): cv.entity_domain("light"),
-    vol.Optional(CONF_MA_PLAYER_ENTITY): cv.entity_domain("media_player"),
+    vol.Optional(CONF_PERSON_ENTITIES): [cv.entity_domain("person")],
+    vol.Optional(CONF_WAKE_MODE): vol.In(WAKE_MODES),
+    vol.Optional(ATTR_DAY_TIMES): validate_day_times,
+    vol.Optional(CONF_LIGHT_ENTITY): vol.Any("", cv.entity_domain("light")),
+    vol.Optional(CONF_MA_PLAYER_ENTITY): vol.Any("", cv.entity_domain("media_player")),
     vol.Optional(CONF_PERSON_ENTITY): vol.Any("", cv.entity_domain("person")),
     vol.Optional(ATTR_ENABLED): cv.boolean,
     vol.Optional(ATTR_TIME_OF_DAY): vol.Any(cv.time, cv.string),
@@ -64,7 +72,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Personal Wakeup alarm entity from a config entry."""
-    async_add_entities([WakeupAlarmEntity(hass, entry)])
+    alarm = WakeupAlarmEntity(hass, entry)
+    entry.runtime_data = alarm
+    async_add_entities([alarm])
 
     # Entity services: HA resolves entity_id / device / area targets for us and
     # registers each service only once per domain.

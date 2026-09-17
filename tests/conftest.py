@@ -22,7 +22,7 @@ from custom_components.personal_wakeup.const import (
     DOMAIN,
 )
 
-ENTITY_ID = "sensor.matilde_wakeup"
+ENTITY_ID = "sensor.matilde_alarm"
 LIGHT = "light.bedroom"
 PLAYER = "media_player.bedroom"
 PERSON = "person.matilde"

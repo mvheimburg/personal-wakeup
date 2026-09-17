@@ -13,12 +13,14 @@ from homeassistant.helpers.selector import selector
 from .const import (
     CONF_LIGHT_ENTITY,
     CONF_MA_PLAYER_ENTITY,
-    CONF_PERSON_ENTITY,
+    CONF_PERSON_ENTITIES,
     CONF_PLAYLIST_OPTIONS,
     CONF_REQUIRE_HOME,
+    CONF_WAKE_MODE,
     DOMAIN,
+    WAKE_MODES,
 )
-from .utils import normalize_playlists
+from .utils import normalize_playlists, selected_people, validate_wiring
 
 DEFAULT_NAME = "Wakeup Alarm"
 DEFAULT_REQUIRE_HOME = False
@@ -32,16 +34,20 @@ def _base_schema(
 
     fields: dict[Any, Any] = {
         vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, DEFAULT_NAME)): str,
-        vol.Required(CONF_LIGHT_ENTITY, default=defaults.get(CONF_LIGHT_ENTITY)): selector(
-            {"entity": {"domain": "light"}}
-        ),
-        vol.Required(CONF_MA_PLAYER_ENTITY, default=defaults.get(CONF_MA_PLAYER_ENTITY)): selector(
-            {"entity": {"domain": "media_player"}}
-        ),
-        vol.Optional(CONF_PERSON_ENTITY, default=defaults.get(CONF_PERSON_ENTITY)): selector(
-            {"entity": {"domain": "person"}}
+        vol.Optional(
+            CONF_LIGHT_ENTITY, description={"suggested_value": defaults.get(CONF_LIGHT_ENTITY)}
+        ): selector({"entity": {"domain": "light"}}),
+        vol.Optional(
+            CONF_MA_PLAYER_ENTITY,
+            description={"suggested_value": defaults.get(CONF_MA_PLAYER_ENTITY)},
+        ): selector({"entity": {"domain": "media_player"}}),
+        vol.Optional(CONF_PERSON_ENTITIES, default=selected_people(defaults)): selector(
+            {"entity": {"domain": "person", "multiple": True}}
         ),
     }
+    fields[vol.Required(CONF_WAKE_MODE, default=defaults.get(CONF_WAKE_MODE, "both"))] = selector(
+        {"select": {"options": list(WAKE_MODES)}}
+    )
     if include_require_home:
         # Only the initial value: afterwards require_home is a runtime setting
         # controlled from the card / set_config service.
@@ -58,12 +64,14 @@ def _base_schema(
 def _validate(user_input: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
     """Return (errors, options) for a submitted form."""
     errors: dict[str, str] = {}
-    if not user_input.get(CONF_LIGHT_ENTITY):
-        errors["base"] = "no_light_entity"
-    elif not user_input.get(CONF_MA_PLAYER_ENTITY):
-        errors["base"] = "no_player_entity"
+    try:
+        validate_wiring(user_input)
+    except vol.Invalid as exc:
+        errors["base"] = str(exc)
 
     options = {k: v for k, v in user_input.items() if k not in (CONF_NAME, CONF_PLAYLIST_OPTIONS)}
+    options[CONF_PERSON_ENTITIES] = selected_people(user_input)
+    options[CONF_WAKE_MODE] = user_input.get(CONF_WAKE_MODE, "both")
     options[CONF_PLAYLIST_OPTIONS] = normalize_playlists(user_input.get(CONF_PLAYLIST_OPTIONS))
     return errors, options
 
@@ -85,7 +93,9 @@ class PersonalWakeupConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_base_schema({CONF_NAME: DEFAULT_NAME}, include_require_home=True),
+            data_schema=_base_schema(
+                user_input or {CONF_NAME: DEFAULT_NAME}, include_require_home=True
+            ),
             errors=errors,
         )
 
@@ -111,12 +121,17 @@ class PersonalWakeupOptionsFlow(OptionsFlow):
                 # restore state still gets a sensible default.
                 if CONF_REQUIRE_HOME in self._entry.options:
                     options[CONF_REQUIRE_HOME] = self._entry.options[CONF_REQUIRE_HOME]
+                # Commit title and options together so only one reload runs.
                 self.hass.config_entries.async_update_entry(
-                    self._entry, title=user_input[CONF_NAME]
+                    self._entry, title=user_input[CONF_NAME], options=options
                 )
                 return self.async_create_entry(title="", data=options)
 
-        current = {**self._entry.options, CONF_NAME: self._entry.title}
+        current = (
+            user_input
+            if user_input is not None
+            else {**self._entry.options, CONF_NAME: self._entry.title}
+        )
         return self.async_show_form(
             step_id="init",
             data_schema=_base_schema(current, include_require_home=False),

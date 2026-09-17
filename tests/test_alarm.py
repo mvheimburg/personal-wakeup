@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import mock_restore_cache
 
@@ -79,6 +80,48 @@ async def test_setup_arms_for_next_time(hass: HomeAssistant, entry) -> None:
     assert dt_util.as_local(next_fire).strftime("%H:%M") == "07:00"
 
 
+@pytest.mark.parametrize("person", ["person.matilde", "person.someone_else", ""])
+async def test_new_sensor_uses_entry_name_regardless_of_person(hass, entry, person):
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "person_entity": person}
+    )
+    await setup_entry(hass, entry)
+
+    sensor = hass.states.get("sensor.matilde_alarm")
+    assert sensor is not None
+    assert sensor.attributes["friendly_name"] == "Matilde alarm"
+    assert sensor.attributes["person_entity"] == (person or None)
+
+
+async def test_existing_sensor_keeps_id_and_uses_entry_name(hass, entry):
+    registry = er.async_get(hass)
+    registered = registry.async_get_or_create(
+        "sensor",
+        "personal_wakeup",
+        entry.entry_id,
+        suggested_object_id="matilde_wakeup",
+        config_entry=entry,
+    )
+    await setup_entry(hass, entry)
+
+    sensor = hass.states.get(registered.entity_id)
+    assert sensor is not None
+    assert sensor.entity_id == "sensor.matilde_wakeup"
+    assert sensor.attributes["friendly_name"] == "Matilde alarm"
+    assert hass.states.get("sensor.matilde_alarm") is None
+
+
+async def test_entry_rename_updates_display_name_without_changing_sensor_id(hass, entry):
+    await setup_entry(hass, entry)
+    hass.config_entries.async_update_entry(entry, title="Weekend wakeup")
+    await hass.async_block_till_done()
+
+    sensor = hass.states.get("sensor.matilde_alarm")
+    assert sensor is not None
+    assert sensor.attributes["friendly_name"] == "Weekend wakeup"
+    assert hass.states.get("sensor.weekend_wakeup") is None
+
+
 async def test_device_settings_persist_and_drive_next_run(hass, entry, calls):
     await setup_entry(hass, entry)
     await set_config(hass, light_entity="light.new", ma_player_entity="media_player.new")
@@ -113,10 +156,16 @@ async def test_person_selection_can_be_changed_and_cleared(hass, entry):
     assert attr(hass, "person_entity") is None
 
 
-@pytest.mark.parametrize("field,value", [
-    ("light_entity", PLAYER), ("ma_player_entity", LIGHT),
-    ("person_entity", LIGHT), ("light_entity", ""), ("ma_player_entity", ""),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("light_entity", PLAYER),
+        ("ma_player_entity", LIGHT),
+        ("person_entity", LIGHT),
+        ("light_entity", ""),
+        ("ma_player_entity", ""),
+    ],
+)
 async def test_device_domains_are_validated(hass, entry, field, value):
     await setup_entry(hass, entry)
     with pytest.raises(vol.Invalid):

@@ -78,3 +78,8 @@ FADE_STEP_SECONDS = 5
 RESUME_RAMP_SECONDS = 30  # music ramp after a snooze
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
+
+CONF_PERSON_ENTITIES = "person_entities"
+CONF_WAKE_MODE = "wake_mode"
+ATTR_DAY_TIMES = "day_times"
+WAKE_MODES = ("lights", "music", "both")
