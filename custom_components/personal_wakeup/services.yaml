@@ -6,6 +6,22 @@ set_config:
       integration: personal_wakeup
       domain: sensor
   fields:
+    light_entity:
+      name: Wakeup light
+      selector:
+        entity:
+          domain: light
+    ma_player_entity:
+      name: Music player
+      selector:
+        entity:
+          domain: media_player
+    person_entity:
+      name: Person
+      description: Person used for presence checking. An empty string clears it.
+      selector:
+        entity:
+          domain: person
     enabled:
       name: Enabled
       description: Enable or disable the alarm schedule. Disabling stops an active alarm.

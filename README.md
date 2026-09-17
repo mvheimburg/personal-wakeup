@@ -59,7 +59,7 @@ All services target the sensor entity (`entity_id`, or device / area targets).
 
 | Service | Fields | What it does |
 | --- | --- | --- |
-| `personal_wakeup.set_config` | `enabled`, `time_of_day`, `weekdays`, `skip_next`, `fade_duration`, `fade_music_duration`, `volume`, `playlist`, `require_home`, `snooze_minutes`, `auto_off_minutes` | Update runtime settings. Disabling stops an active alarm. A pending snooze is not cancelled by other changes. |
+| `personal_wakeup.set_config` | `enabled`, `time_of_day`, `weekdays`, `skip_next`, `fade_duration`, `fade_music_duration`, `volume`, `playlist`, `require_home`, `snooze_minutes`, `auto_off_minutes`, `light_entity`, `ma_player_entity`, `person_entity` | Update settings. Disabling stops an active alarm. Changing device or person selections stops an active alarm or pending snooze and saves the selection in integration options. Other changes preserve a pending snooze. |
 | `personal_wakeup.trigger_now` | | Start the wake-up sequence now, ignoring presence. |
 | `personal_wakeup.snooze` | `duration_minutes` (optional, default `snooze_minutes`) | Silence and ring again later. Only while rising, ringing or snoozed. |
 | `personal_wakeup.stop` | | Stop the alarm or cancel a snooze, arm the next occurrence. |

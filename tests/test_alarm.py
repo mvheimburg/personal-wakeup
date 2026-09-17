@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+import voluptuous as vol
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import mock_restore_cache
@@ -20,6 +21,7 @@ from custom_components.personal_wakeup.const import (
 from .conftest import (
     ENTITY_ID,
     LIGHT,
+    PLAYER,
     PLAYLISTS,
     START,
     advance,
@@ -75,6 +77,50 @@ async def test_setup_arms_for_next_time(hass: HomeAssistant, entry) -> None:
     next_fire = dt_util.parse_datetime(s.attributes["next_fire"])
     assert next_fire > dt_util.utcnow()
     assert dt_util.as_local(next_fire).strftime("%H:%M") == "07:00"
+
+
+async def test_device_settings_persist_and_drive_next_run(hass, entry, calls):
+    await setup_entry(hass, entry)
+    await set_config(hass, light_entity="light.new", ma_player_entity="media_player.new")
+    assert entry.options["light_entity"] == "light.new"
+    assert entry.options["ma_player_entity"] == "media_player.new"
+    assert entry.options["playlist_options"] == PLAYLISTS
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert attr(hass, "light_entity") == "light.new"
+    assert attr(hass, "player_entity") == "media_player.new"
+    await call(hass, "trigger_now")
+    await settle(hass)
+    assert calls["light_on"][-1].data["entity_id"] == "light.new"
+    await call(hass, "stop")
+    assert calls["media_stop"][-1].data["entity_id"] == "media_player.new"
+
+
+async def test_device_change_stops_original_player(hass, entry, calls):
+    await setup_entry(hass, entry)
+    await call(hass, "trigger_now")
+    await settle(hass)
+    await set_config(hass, ma_player_entity="media_player.new")
+    assert calls["media_stop"][-1].data["entity_id"] == PLAYER
+    assert state(hass).state == STATE_ARMED
+
+
+async def test_person_selection_can_be_changed_and_cleared(hass, entry):
+    await setup_entry(hass, entry)
+    await set_config(hass, person_entity="person.other")
+    assert attr(hass, "person_entity") == "person.other"
+    await set_config(hass, person_entity="")
+    assert attr(hass, "person_entity") is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("light_entity", PLAYER), ("ma_player_entity", LIGHT),
+    ("person_entity", LIGHT), ("light_entity", ""), ("ma_player_entity", ""),
+])
+async def test_device_domains_are_validated(hass, entry, field, value):
+    await setup_entry(hass, entry)
+    with pytest.raises(vol.Invalid):
+        await set_config(hass, **{field: value})
 
 
 async def test_full_run_then_stop(hass, entry, freezer, calls, events) -> None:

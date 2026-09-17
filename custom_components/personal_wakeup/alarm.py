@@ -156,7 +156,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         self.hass = hass
         self._entry = entry
 
-        person_entity: str | None = entry.options.get(CONF_PERSON_ENTITY)
+        person_entity: str | None = entry.options.get(CONF_PERSON_ENTITY) or None
         pretty_person: str | None = None
         if person_entity and "." in person_entity:
             pretty_person = person_entity.split(".", 1)[1].replace("_", " ").title()
@@ -708,6 +708,18 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     async def async_set_config(self, **data: Any) -> None:
         """Update runtime settings from the set_config service."""
         _LOGGER.debug("%s: set_config %s", self.entity_id, data)
+        device_options = {
+            key: data[key]
+            for key in (CONF_LIGHT_ENTITY, CONF_MA_PLAYER_ENTITY, CONF_PERSON_ENTITY)
+            if key in data
+        }
+        if device_options:
+            # Options reload the entity; stop the original player before replacing it.
+            if self._state in STOPPABLE_STATES:
+                await self.async_stop()
+            self.hass.config_entries.async_update_entry(
+                self._entry, options={**self._entry.options, **device_options}
+            )
         was_enabled = self._config.enabled
         self._apply_runtime_settings(data)
 

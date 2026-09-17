@@ -25,6 +25,9 @@ from .const import (
     ATTR_TIME_OF_DAY,
     ATTR_VOLUME,
     ATTR_WEEKDAYS,
+    CONF_LIGHT_ENTITY,
+    CONF_MA_PLAYER_ENTITY,
+    CONF_PERSON_ENTITY,
     SERVICE_SET_CONFIG,
     SERVICE_SNOOZE,
     SERVICE_STOP,
@@ -34,6 +37,9 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 SET_CONFIG_FIELDS = {
+    vol.Optional(CONF_LIGHT_ENTITY): cv.entity_domain("light"),
+    vol.Optional(CONF_MA_PLAYER_ENTITY): cv.entity_domain("media_player"),
+    vol.Optional(CONF_PERSON_ENTITY): vol.Any("", cv.entity_domain("person")),
     vol.Optional(ATTR_ENABLED): cv.boolean,
     vol.Optional(ATTR_TIME_OF_DAY): vol.Any(cv.time, cv.string),
     vol.Optional(ATTR_WEEKDAYS): cv.weekdays,
