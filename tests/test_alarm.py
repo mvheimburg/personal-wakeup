@@ -87,38 +87,49 @@ async def test_new_sensor_uses_entry_name_regardless_of_person(hass, entry, pers
     )
     await setup_entry(hass, entry)
 
-    sensor = hass.states.get("sensor.matilde_alarm")
+    sensor = hass.states.get("sensor.matilde_wakeup")
     assert sensor is not None
-    assert sensor.attributes["friendly_name"] == "Matilde alarm"
+    assert sensor.attributes["friendly_name"] == "Matilde"
     assert sensor.attributes["person_entity"] == (person or None)
 
 
 async def test_existing_sensor_keeps_id_and_uses_entry_name(hass, entry):
+    # Created before the "<name>_wakeup" rule: its ID must not move.
     registry = er.async_get(hass)
     registered = registry.async_get_or_create(
         "sensor",
         "personal_wakeup",
         entry.entry_id,
-        suggested_object_id="matilde_wakeup",
+        suggested_object_id="matilde",
         config_entry=entry,
     )
     await setup_entry(hass, entry)
 
     sensor = hass.states.get(registered.entity_id)
     assert sensor is not None
-    assert sensor.entity_id == "sensor.matilde_wakeup"
-    assert sensor.attributes["friendly_name"] == "Matilde alarm"
-    assert hass.states.get("sensor.matilde_alarm") is None
+    assert sensor.entity_id == "sensor.matilde"
+    assert sensor.attributes["friendly_name"] == "Matilde"
+    assert hass.states.get("sensor.matilde_wakeup") is None
+
+
+async def test_new_sensor_id_is_name_and_wakeup_in_any_language(hass, entry):
+    hass.config.language = "nb"
+    hass.config_entries.async_update_entry(entry, title="Lila")
+    await setup_entry(hass, entry)
+
+    sensor = hass.states.get("sensor.lila_wakeup")
+    assert sensor is not None
+    assert sensor.attributes["friendly_name"] == "Lila"
 
 
 async def test_entry_rename_updates_display_name_without_changing_sensor_id(hass, entry):
     await setup_entry(hass, entry)
-    hass.config_entries.async_update_entry(entry, title="Weekend wakeup")
+    hass.config_entries.async_update_entry(entry, title="Weekend")
     await hass.async_block_till_done()
 
-    sensor = hass.states.get("sensor.matilde_alarm")
+    sensor = hass.states.get("sensor.matilde_wakeup")
     assert sensor is not None
-    assert sensor.attributes["friendly_name"] == "Weekend wakeup"
+    assert sensor.attributes["friendly_name"] == "Weekend"
     assert hass.states.get("sensor.weekend_wakeup") is None
 
 

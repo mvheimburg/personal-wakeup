@@ -53,10 +53,13 @@ comma-separated list of playlist URIs the card can pick from. Everything else
 is a runtime setting changed from the card or the `set_config` service and is
 restored across restarts.
 
-One sensor entity is created per config entry, named after the name entered
-during setup. For example, `Weekend wakeup` creates `sensor.weekend_wakeup`;
-the selected people only control presence checks. Existing entity IDs remain
-unchanged when updating the integration or renaming an entry. A custom name
+One sensor entity is created per config entry, on a device named after the
+name entered during setup. Its entity ID is that name plus `_wakeup`, in any
+Home Assistant language: `Lila` creates `sensor.lila_wakeup`, shown as *Lila*
+(from 0.5.0; earlier versions created `sensor.lila`). The selected people only
+control presence checks. Existing entity IDs remain unchanged when updating the
+integration or renaming an entry; rename one under **Settings → Entities** if
+you want the new form. A custom name
 set directly on the entity still takes precedence. Its state is
 one of `disarmed`, `armed`, `rising`, `ringing`, `snoozed`.
 

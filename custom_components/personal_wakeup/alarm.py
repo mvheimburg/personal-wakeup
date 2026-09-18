@@ -30,6 +30,7 @@ from homeassistant.const import (
     WEEKDAYS,
 )
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -164,7 +165,15 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         # Retain old wiring until a changed options entry has stopped its run.
         self._options = dict(entry.options)
 
-        self._attr_name = entry.title or "Wakeup Alarm"
+        # The entry name names a device; the entity takes that name, and its ID
+        # is "<name>_wakeup" in any UI language (see suggested_object_id).
+        self._attr_name = None
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title or "Wakeup",
+            manufacturer="Personal WakeUp",
+            model="Wakeup alarm",
+        )
         # Stable identity: never derive this from user-editable options.
         self._attr_unique_id = entry.entry_id
 
@@ -186,6 +195,11 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     # ------------------------------------------------------------------ #
     # Entity API
     # ------------------------------------------------------------------ #
+
+    @property
+    def suggested_object_id(self) -> str:
+        # Prefixed with the device (entry) name: "Lila" -> sensor.lila_wakeup.
+        return "wakeup"
 
     @property
     def state(self) -> str:

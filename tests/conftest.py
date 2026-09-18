@@ -22,7 +22,7 @@ from custom_components.personal_wakeup.const import (
     DOMAIN,
 )
 
-ENTITY_ID = "sensor.matilde_alarm"
+ENTITY_ID = "sensor.matilde_wakeup"
 LIGHT = "light.bedroom"
 PLAYER = "media_player.bedroom"
 PERSON = "person.matilde"
@@ -59,7 +59,7 @@ def events(hass: HomeAssistant):
 def entry(hass: HomeAssistant, require_home: bool = False) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="Matilde alarm",
+        title="Matilde",
         data={},
         options={
             CONF_LIGHT_ENTITY: LIGHT,
