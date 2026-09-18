@@ -1,3 +1,5 @@
+<img src="custom_components/personal_wakeup/brand/icon.png" alt="" width="96" align="right">
+
 # Personal Wakeup (Home Assistant integration)
 
 A wake-up alarm for Home Assistant: a sunrise-style light fade, a Music
