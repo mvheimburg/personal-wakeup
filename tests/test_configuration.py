@@ -148,7 +148,7 @@ async def test_invalid_day_times_are_atomic(hass, entry, bad):
     with pytest.raises(vol.Invalid):
         await set_config(hass, day_times=bad, enabled=False, person_entities=[])
     assert attr(hass, "enabled") is True
-    assert attr(hass, "person_entity") == "person.matilde"
+    assert attr(hass, "person_entity") == "person.alex"
 
 
 async def test_day_times_restore_and_default_fallback(hass, entry):

@@ -212,7 +212,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
 
     @property
     def suggested_object_id(self) -> str:
-        # Prefixed with the device (entry) name: "Lila" -> sensor.lila_wakeup.
+        # Prefixed with the device (entry) name: "Sam" -> sensor.sam_wakeup.
         return "wakeup"
 
     @property

@@ -68,8 +68,8 @@ restored across restarts.
 
 One sensor entity is created per config entry, on a device named after the
 name entered during setup. Its entity ID is that name plus `_wakeup`, in any
-Home Assistant language: `Lila` creates `sensor.lila_wakeup`, shown as *Lila*
-(from 0.5.0; earlier versions created `sensor.lila`). The selected people only
+Home Assistant language: `Sam` creates `sensor.sam_wakeup`, shown as *Sam*
+(from 0.5.0; earlier versions created `sensor.sam`). The selected people only
 control presence checks. Existing entity IDs remain unchanged when updating the
 integration or renaming an entry; rename one under **Settings → Entities** if
 you want the new form. A custom name
@@ -151,7 +151,7 @@ triggers:
   - trigger: event
     event_type: personal_wakeup_event
     event_data:
-      entity_id: sensor.matilde_wakeup
+      entity_id: sensor.alex_wakeup
       type: stopped
 actions:
   - action: switch.turn_on

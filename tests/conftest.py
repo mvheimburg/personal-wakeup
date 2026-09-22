@@ -22,10 +22,10 @@ from custom_components.personal_wakeup.const import (
     DOMAIN,
 )
 
-ENTITY_ID = "sensor.matilde_wakeup"
+ENTITY_ID = "sensor.alex_wakeup"
 LIGHT = "light.bedroom"
 PLAYER = "media_player.bedroom"
-PERSON = "person.matilde"
+PERSON = "person.alex"
 PLAYLISTS = ["library://playlist/1", "library://playlist/2"]
 
 # A fixed "now": Monday 2026-09-14 22:00 UTC (00:00 Tue in Europe/Copenhagen)
@@ -59,7 +59,7 @@ def events(hass: HomeAssistant):
 def entry(hass: HomeAssistant, require_home: bool = False) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="Matilde",
+        title="Alex",
         data={},
         options={
             CONF_LIGHT_ENTITY: LIGHT,
