@@ -45,6 +45,7 @@ from .const import (
     ATTR_ENABLED,
     ATTR_FADE_DURATION,
     ATTR_FADE_MUSIC_DURATION,
+    ATTR_FADE_START,
     ATTR_LIGHT_ENTITY,
     ATTR_NEXT_FIRE,
     ATTR_PERSON_ENTITY,
@@ -59,6 +60,8 @@ from .const import (
     ATTR_SNOOZE_UNTIL,
     ATTR_TIME_OF_DAY,
     ATTR_VOLUME,
+    ATTR_WAKE_AT,
+    ATTR_WAKE_BRIGHTNESS,
     ATTR_WEEKDAYS,
     CONF_LIGHT_ENTITY,
     CONF_MA_PLAYER_ENTITY,
@@ -74,8 +77,10 @@ from .const import (
     DEFAULT_SNOOZE_MINUTES,
     DEFAULT_TIME_OF_DAY,
     DEFAULT_VOLUME,
+    DEFAULT_WAKE_BRIGHTNESS,
     DOMAIN,
     EVENT_AUTO_OFF,
+    EVENT_COMPLETED,
     EVENT_RINGING,
     EVENT_SKIPPED,
     EVENT_SNOOZED,
@@ -139,18 +144,24 @@ class WakeupConfig:
     require_home: bool = False
     snooze_minutes: int = DEFAULT_SNOOZE_MINUTES
     auto_off_minutes: int = DEFAULT_AUTO_OFF_MINUTES
+    wake_brightness: int = DEFAULT_WAKE_BRIGHTNESS  # percent at the alarm time
 
 
 class WakeupAlarmEntity(RestoreEntity, Entity):
     """Single wakeup alarm entity for one config entry.
 
+    The alarm time is the wake time: the light's sunrise runs for
+    fade_duration before it and reaches wake_brightness at it; music starts
+    at it.
+
     State machine:
 
         disarmed  -> armed      (enabled)
-        armed     -> rising     (alarm time; light + music fade in)
+        armed     -> rising     (fade start; light fades in, then music)
         rising    -> ringing    (fades complete, waits for the user)
+        rising    -> armed      (lights only: the light reached its level)
         ringing   -> armed      (stop, or auto-off after auto_off_minutes)
-        rising/ringing -> snoozed   (snooze; music stops, light untouched)
+        rising/ringing -> snoozed   (snooze, not lights only; music stops)
         snoozed   -> ringing    (snooze time; music resumes at once, light on)
         snoozed   -> armed      (stop)
     """
@@ -188,6 +199,9 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         self._skipped_fire: datetime | None = None
         self._snooze_until: datetime | None = None
         self._run_started: datetime | None = None
+        # The wake time of the current (or last) run, so a stopped run's
+        # occurrence is not picked up again while it is still in the future.
+        self._wake_at: datetime | None = None
 
         self._unsub_timer: CALLBACK_TYPE | None = None
         self._run_task: asyncio.Task | None = None
@@ -224,15 +238,28 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             ATTR_REQUIRE_HOME: cfg.require_home,
             ATTR_SNOOZE_MINUTES: cfg.snooze_minutes,
             ATTR_AUTO_OFF_MINUTES: cfg.auto_off_minutes,
+            ATTR_WAKE_BRIGHTNESS: cfg.wake_brightness,
             ATTR_NEXT_FIRE: self._next_fire.isoformat() if self._next_fire else None,
+            ATTR_FADE_START: (
+                self._fade_start(self._next_fire).isoformat()
+                if self._next_fire and self._state == STATE_ARMED
+                else None
+            ),
+            ATTR_WAKE_AT: self._wake_at.isoformat() if self._wake_at else None,
             ATTR_SKIPPED_FIRE: (self._skipped_fire.isoformat() if self._skipped_fire else None),
             ATTR_SNOOZE_UNTIL: (self._snooze_until.isoformat() if self._snooze_until else None),
             ATTR_RUN_STARTED: (self._run_started.isoformat() if self._run_started else None),
             ATTR_PERSON_ENTITY: self._person_entity,
             ATTR_LIGHT_ENTITY: self._light_entity,
             ATTR_PLAYER_ENTITY: self._player_entity,
-            ATTR_CAN_SNOOZE: self._state in STOPPABLE_STATES,
-            ATTR_CAN_STOP: self._state in STOPPABLE_STATES,
+            # A light alone cannot be snoozed; once it is up, there is
+            # nothing left to stop.
+            ATTR_CAN_SNOOZE: self._state in STOPPABLE_STATES and self._wake_mode != "lights",
+            ATTR_CAN_STOP: (
+                self._state == STATE_RISING
+                if self._wake_mode == "lights"
+                else self._state in STOPPABLE_STATES
+            ),
         }
 
     async def async_added_to_hass(self) -> None:
@@ -271,16 +298,22 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         return self._options.get(CONF_WAKE_MODE, "both")
 
     @property
-    def _fade_seconds(self) -> float:
-        if self._wake_mode == "lights":
-            return self._config.fade_duration
-        if self._wake_mode == "music":
-            return self._config.fade_music_duration
-        music_end = (
-            max(0, self._config.fade_duration - self._config.fade_music_duration / 2)
-            + self._config.fade_music_duration
-        )
-        return max(self._config.fade_duration, music_end)
+    def _lead_seconds(self) -> int:
+        """How long before the wake time a run starts: the light's sunrise."""
+        if self._wake_mode == "music" or not self._light_entity:
+            return 0
+        return max(1, int(self._config.fade_duration))
+
+    @property
+    def _music_ramp_seconds(self) -> int:
+        return 0 if self._wake_mode == "lights" else max(1, int(self._config.fade_music_duration))
+
+    def _fade_start(self, wake_at: datetime) -> datetime:
+        return wake_at - timedelta(seconds=self._lead_seconds)
+
+    @property
+    def _target_brightness(self) -> int:
+        return max(1, round(MAX_BRIGHTNESS * self._config.wake_brightness / 100))
 
     @property
     def _light_entity(self) -> str | None:
@@ -361,6 +394,16 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
                 except (TypeError, ValueError):
                     _LOGGER.error("Invalid %s %r for %s", key, data[key], self.entity_id)
 
+        if ATTR_WAKE_BRIGHTNESS in data:
+            try:
+                cfg.wake_brightness = max(1, min(100, int(data[ATTR_WAKE_BRIGHTNESS])))
+            except (TypeError, ValueError):
+                _LOGGER.error(
+                    "Invalid wake_brightness %r for %s",
+                    data[ATTR_WAKE_BRIGHTNESS],
+                    self.entity_id,
+                )
+
         if ATTR_VOLUME in data:
             try:
                 cfg.volume = max(0.0, min(1.0, float(data[ATTR_VOLUME])))
@@ -383,6 +426,11 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     async def _restore_run_state(self, last_state: str, attrs: dict[str, Any]) -> None:
         """Re-establish a pending snooze or an interrupted run after a restart."""
         now = dt_util.utcnow()
+        # Before 0.6.0 a run started at the alarm time, so its start is its wake time.
+        wake_at = dt_util.parse_datetime(
+            str(attrs.get(ATTR_WAKE_AT) or attrs.get(ATTR_RUN_STARTED) or "")
+        )
+        self._wake_at = dt_util.as_utc(wake_at) if wake_at else None
 
         if last_state == STATE_SNOOZED and self._config.enabled:
             snooze_until = dt_util.parse_datetime(str(attrs.get(ATTR_SNOOZE_UNTIL) or ""))
@@ -396,27 +444,40 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
                 await self._start_run(resume=True, ignore_presence=True)
                 return
 
-        if last_state in ACTIVE_STATES and self._config.enabled:
+        if last_state in ACTIVE_STATES and self._config.enabled and self._wake_at:
             run_started = dt_util.parse_datetime(str(attrs.get(ATTR_RUN_STARTED) or ""))
-            if run_started is not None:
-                run_started = dt_util.as_utc(run_started)
-                deadline = run_started + timedelta(
-                    seconds=self._fade_seconds + self._config.auto_off_minutes * 60
+            run_started = dt_util.as_utc(run_started) if run_started else now
+            if now < self._wake_at:
+                # Still before the wake time: carry on with the sunrise.
+                _LOGGER.info("%s: resuming interrupted sunrise", self.entity_id)
+                await self._start_run(
+                    resume=False,
+                    ignore_presence=True,
+                    wake_at=self._wake_at,
+                    run_started=run_started,
                 )
-                remaining = (deadline - now).total_seconds()
-                if remaining > 0:
-                    _LOGGER.info(
-                        "%s: resuming interrupted alarm run (%.0fs until auto-off)",
-                        self.entity_id,
-                        remaining,
-                    )
-                    await self._start_run(
-                        resume=True,
-                        ignore_presence=True,
-                        auto_off_seconds=remaining,
-                        run_started=run_started,
-                    )
-                    return
+                return
+            deadline = self._wake_at + timedelta(
+                seconds=self._music_ramp_seconds + self._config.auto_off_minutes * 60
+            )
+            remaining = (deadline - now).total_seconds()
+            if remaining > 0 and self._wake_mode != "lights":
+                _LOGGER.info(
+                    "%s: resuming interrupted alarm run (%.0fs until auto-off)",
+                    self.entity_id,
+                    remaining,
+                )
+                await self._start_run(
+                    resume=True,
+                    ignore_presence=True,
+                    auto_off_seconds=remaining,
+                    run_started=run_started,
+                    wake_at=self._wake_at,
+                )
+                return
+            if self._wake_mode == "lights":
+                # The sunrise was over: make sure the light got there.
+                await self._ensure_light_on()
 
         await self._reschedule()
 
@@ -443,6 +504,9 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             candidate = datetime.combine(day, day_time, tzinfo=now_local.tzinfo)
             if candidate <= now_local:
                 continue
+            # A run already handled this wake time (stopped, skipped or done).
+            if self._wake_at is not None and dt_util.as_utc(candidate) <= self._wake_at:
+                continue
             if WEEKDAYS[candidate.weekday()] not in cfg.weekdays:
                 continue
             found.append(dt_util.as_utc(candidate))
@@ -467,7 +531,9 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             self._set_state(STATE_ARMED)
             return
 
-        timer_at = occurrences[0]
+        # The run starts the fade before the wake time; if that moment has
+        # passed (an alarm set close to its time), it starts now, shorter.
+        timer_at = max(self._fade_start(occurrences[0]), dt_util.utcnow())
         if self._config.skip_next:
             self._skipped_fire = occurrences[0]
             self._next_fire = occurrences[1] if len(occurrences) > 1 else None
@@ -490,9 +556,11 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         self.hass.async_create_task(self._handle_alarm_time())
 
     async def _handle_alarm_time(self) -> None:
+        wake_at = self._skipped_fire if self._config.skip_next else self._next_fire
         if self._config.skip_next:
             skipped = self._skipped_fire
             self._config.skip_next = False
+            self._wake_at = skipped
             _LOGGER.info("%s: skipping occurrence %s", self.entity_id, skipped)
             self._fire_event(
                 EVENT_SKIPPED,
@@ -503,7 +571,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             self._write()
             return
 
-        await self._start_run(resume=False, ignore_presence=False)
+        await self._start_run(resume=False, ignore_presence=False, wake_at=wake_at)
 
     def _schedule_snooze_at(self, snooze_until: datetime) -> None:
         self._cancel_timer()
@@ -538,10 +606,18 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         ignore_presence: bool,
         auto_off_seconds: float | None = None,
         run_started: datetime | None = None,
+        wake_at: datetime | None = None,
     ) -> None:
-        """Start (or restart) the alarm run as a background task."""
+        """Start (or restart) the alarm run as a background task.
+
+        `wake_at` is when the light reaches its level and music starts; a
+        manual trigger or a resume without one wakes after a full fade.
+        """
         self._cancel_timer()
         await self._cancel_run()
+        if wake_at is None:
+            wake_at = dt_util.utcnow() + timedelta(seconds=0 if resume else self._lead_seconds)
+        self._wake_at = wake_at
 
         if not ignore_presence and self._config.require_home and not self._person_is_home():
             _LOGGER.info(
@@ -558,7 +634,7 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         self._run_started = run_started or dt_util.utcnow()
         self._run_task = self._entry.async_create_background_task(
             self.hass,
-            self._run(resume=resume, auto_off_seconds=auto_off_seconds),
+            self._run(resume=resume, auto_off_seconds=auto_off_seconds, wake_at=wake_at),
             name=f"{DOMAIN} run {self.entity_id}",
         )
 
@@ -571,11 +647,13 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         with suppress(asyncio.CancelledError):
             await task
 
-    async def _run(self, *, resume: bool, auto_off_seconds: float | None) -> None:
-        """The alarm sequence: fade in, ring until stopped or auto-off."""
+    async def _run(
+        self, *, resume: bool, auto_off_seconds: float | None, wake_at: datetime
+    ) -> None:
+        """The alarm sequence: sunrise up to the wake time, then ring until stopped."""
         try:
             self._set_state(STATE_RISING)
-            self._fire_event(EVENT_TRIGGERED, resume=resume)
+            self._fire_event(EVENT_TRIGGERED, resume=resume, wake_at=wake_at.isoformat())
 
             try:
                 # A restored deadline includes the resume ramp itself.
@@ -587,11 +665,23 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
                                 self._fade_music(resume=True),
                             )
                         else:
-                            await asyncio.gather(self._fade_light(), self._fade_music())
+                            await asyncio.gather(
+                                self._fade_light(wake_at), self._fade_music(wake_at=wake_at)
+                            )
                     except asyncio.CancelledError:
                         raise
                     except Exception:  # noqa: BLE001 - keep ringing even if a fade failed
                         _LOGGER.exception("%s: error during fade-in", self.entity_id)
+
+                    if self._wake_mode == "lights":
+                        # A light alone has nothing to ring: the sunrise is the alarm.
+                        _LOGGER.info("%s: light reached its wake-up level", self.entity_id)
+                        self._fire_event(EVENT_COMPLETED)
+                        self._run_task = None
+                        self._run_started = None
+                        await self._reschedule()
+                        self._write()
+                        return
 
                     self._set_state(STATE_RINGING)
                     self._fire_event(EVENT_RINGING)
@@ -639,35 +729,42 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
     async def _ensure_light_on(self) -> None:
         if self._wake_mode == "music" or not self._light_entity:
             return
-        if self._current_brightness() >= MAX_BRIGHTNESS:
+        if self._current_brightness() >= self._target_brightness:
             return
-        await self._light_turn_on(MAX_BRIGHTNESS, FADE_STEP_SECONDS)
+        await self._light_turn_on(self._target_brightness, FADE_STEP_SECONDS)
 
-    async def _fade_light(self) -> None:
-        """Fade the light from its current brightness to 100% over fade_duration."""
+    async def _fade_light(self, wake_at: datetime) -> None:
+        """Sunrise: fade the light to wake_brightness, arriving at wake_at.
+
+        Brightness follows the square of the elapsed share, because the eye is
+        far more sensitive to changes when it is dark: a straight ramp looks
+        bright within minutes, this one stays dim for most of the fade.
+        """
         if self._wake_mode == "music":
             return
         if not self._light_entity:
             _LOGGER.warning("%s: no light configured; skipping light fade", self.entity_id)
             return
 
-        duration = max(1, int(self._config.fade_duration))
-        steps = max(1, duration // FADE_STEP_SECONDS)
+        target = self._target_brightness
         start = self._current_brightness()
-        if start >= MAX_BRIGHTNESS:
-            _LOGGER.info("%s: light already at full brightness", self.entity_id)
+        if start >= target:
+            _LOGGER.info("%s: light already at its wake-up brightness", self.entity_id)
             return
+        duration = max(0, int((wake_at - dt_util.utcnow()).total_seconds()))
+        steps = max(1, duration // FADE_STEP_SECONDS)
 
         _LOGGER.info(
-            "%s: fading %s from %s to %s over %ss",
+            "%s: sunrise on %s from %s to %s over %ss",
             self.entity_id,
             self._light_entity,
             start,
-            MAX_BRIGHTNESS,
+            target,
             duration,
         )
         for step in range(1, steps + 1):
-            brightness = start + int((MAX_BRIGHTNESS - start) * step / steps)
+            share = step / steps
+            brightness = max(1, start + round((target - start) * share * share))
             await self._light_turn_on(brightness, FADE_STEP_SECONDS)
             if step < steps:
                 await asyncio.sleep(FADE_STEP_SECONDS)
@@ -716,11 +813,11 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error("%s: error stopping %s: %s", self.entity_id, self._player_entity, exc)
 
-    async def _fade_music(self, *, resume: bool = False) -> None:
+    async def _fade_music(self, *, resume: bool = False, wake_at: datetime | None = None) -> None:
         """Start playback and ramp volume to the target.
 
-        Regular run: the ramp lasts fade_music_duration and is centred on the
-        moment the light reaches full brightness (half before, half after).
+        Regular run: playback starts at the wake time, when the light has
+        reached its level, and ramps over fade_music_duration.
         Resume (after a snooze): playback starts immediately with a short ramp.
         """
         if self._wake_mode == "lights":
@@ -734,9 +831,8 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             ramp = RESUME_RAMP_SECONDS
             delay = 0.0
         else:
-            light_duration = max(1, int(self._config.fade_duration))
             ramp = max(1, int(self._config.fade_music_duration))
-            delay = max(0.0, light_duration - ramp / 2.0) if self._wake_mode == "both" else 0.0
+            delay = max(0.0, (wake_at - dt_util.utcnow()).total_seconds()) if wake_at else 0.0
 
         if delay > 0:
             _LOGGER.debug("%s: music starts in %.0fs", self.entity_id, delay)
@@ -827,6 +923,9 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
 
     async def async_snooze(self, duration_minutes: int | None = None) -> None:
         """Silence the alarm and ring again after duration_minutes."""
+        if self._wake_mode == "lights":
+            _LOGGER.info("%s: snooze ignored, a light alone cannot be snoozed", self.entity_id)
+            return
         if self._state not in STOPPABLE_STATES:
             _LOGGER.info("%s: snooze ignored, alarm not active", self.entity_id)
             return

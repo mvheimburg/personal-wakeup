@@ -466,3 +466,129 @@ async def test_unload_cancels_run_but_keeps_music(hass, entry, freezer, calls) -
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY_ID).state == "unavailable"
     assert not calls["media_stop"]
+
+
+async def tick_until(hass, freezer, when, step=5):
+    while dt_util.utcnow() < when:
+        await advance(hass, freezer, step)
+        await settle(hass)
+
+
+async def test_sunrise_ends_at_the_alarm_time_and_music_starts_then(
+    hass, entry, freezer, calls, events
+) -> None:
+    await arm_fast(hass, entry)
+    wake = dt_util.parse_datetime(attr(hass, "next_fire"))
+    fade_start = dt_util.parse_datetime(attr(hass, "fade_start"))
+    assert dt_util.as_local(wake).strftime("%H:%M") == "07:00"
+    assert wake - fade_start == timedelta(seconds=20)
+
+    await jump_to(hass, freezer, fade_start)
+    await settle(hass)
+    assert state(hass).state == STATE_RISING
+    assert attr(hass, "wake_at") == wake.isoformat()
+    assert events[-1]["wake_at"] == wake.isoformat()
+    assert calls["light_on"]
+    await tick_until(hass, freezer, wake - timedelta(seconds=5))
+    assert dt_util.utcnow() < wake
+    assert not calls["play_media"]  # no sound before the wake time
+
+    await tick_until(hass, freezer, wake)
+    brightness = [c.data["brightness"] for c in calls["light_on"]]
+    assert brightness[-1] == 255  # full at the alarm time
+    # Perceived-brightness curve: the first half of the fade stays dim.
+    assert brightness[: len(brightness) // 2][-1] <= 255 // 3
+    assert len(calls["play_media"]) == 1
+    await tick_until(hass, freezer, wake + timedelta(seconds=10))
+    assert state(hass).state == STATE_RINGING
+
+
+async def test_wake_brightness_caps_the_sunrise(hass, entry, freezer, calls) -> None:
+    await arm_fast(hass, entry, wake_brightness=60)
+    assert attr(hass, "wake_brightness") == 60
+    wake = dt_util.parse_datetime(attr(hass, "next_fire"))
+    await jump_to(hass, freezer, dt_util.parse_datetime(attr(hass, "fade_start")))
+    await settle(hass)
+    await tick_until(hass, freezer, wake)
+    assert calls["light_on"][-1].data["brightness"] == 153
+    assert max(c.data["brightness"] for c in calls["light_on"]) == 153
+
+
+async def test_lights_only_finishes_at_the_alarm_time_without_snooze(
+    hass, entry, freezer, calls, events
+) -> None:
+    await setup_entry(hass, entry)
+    await set_config(hass, wake_mode="lights", time_of_day="07:00", fade_duration=20)
+    wake = dt_util.parse_datetime(attr(hass, "next_fire"))
+    await jump_to(hass, freezer, dt_util.parse_datetime(attr(hass, "fade_start")))
+    await settle(hass)
+    assert state(hass).state == STATE_RISING
+    assert attr(hass, "can_stop") is True
+    assert attr(hass, "can_snooze") is False
+
+    await tick_until(hass, freezer, wake + timedelta(seconds=5))
+    # Up at the alarm time: the run is over, nothing to stop or snooze.
+    assert state(hass).state == STATE_ARMED
+    assert calls["light_on"][-1].data["brightness"] == 255
+    assert [e["type"] for e in events] == ["triggered", "completed"]
+    assert attr(hass, "can_stop") is False
+    assert attr(hass, "can_snooze") is False
+    assert dt_util.parse_datetime(attr(hass, "next_fire")) - wake == timedelta(days=1)
+    assert not calls["play_media"] and not calls["media_stop"]
+
+
+async def test_stop_during_sunrise_keeps_the_light_and_does_not_restart(
+    hass, entry, freezer, calls, events
+) -> None:
+    await arm_fast(hass, entry)
+    wake = dt_util.parse_datetime(attr(hass, "next_fire"))
+    await jump_to(hass, freezer, dt_util.parse_datetime(attr(hass, "fade_start")))
+    await settle(hass)
+    await advance(hass, freezer, 5)
+    await settle(hass)
+    light_calls = len(calls["light_on"])
+
+    await call(hass, "stop")
+    assert state(hass).state == STATE_ARMED
+    assert events[-1]["type"] == "stopped"
+    # Today's 07:00 is still ahead, but it has been handled.
+    assert dt_util.parse_datetime(attr(hass, "next_fire")) - wake == timedelta(days=1)
+    await tick_until(hass, freezer, wake + timedelta(seconds=30))
+    assert len(calls["light_on"]) == light_calls
+    assert not calls["play_media"]
+
+
+async def test_alarm_set_inside_the_fade_starts_now_with_a_shorter_sunrise(
+    hass, entry, freezer, calls
+) -> None:
+    await setup_entry(hass, entry)
+    soon = dt_util.as_local(dt_util.utcnow() + timedelta(minutes=5))
+    await set_config(
+        hass,
+        time_of_day=soon.strftime("%H:%M"),
+        fade_duration=900,
+        fade_music_duration=10,
+        auto_off_minutes=30,
+    )
+    await settle(hass)
+    await advance(hass, freezer, 1)
+    await settle(hass)
+    assert state(hass).state == STATE_RISING
+    wake = dt_util.parse_datetime(attr(hass, "wake_at"))
+    assert timedelta(minutes=4) < wake - dt_util.utcnow() <= timedelta(minutes=5)
+    await tick_until(hass, freezer, wake)
+    assert calls["light_on"][-1].data["brightness"] == 255
+
+
+async def test_skip_next_skips_the_sunrise_without_repeating_it(
+    hass, entry, freezer, calls, events
+) -> None:
+    await arm_fast(hass, entry, skip_next=True)
+    skipped = dt_util.parse_datetime(attr(hass, "skipped_fire"))
+    await jump_to(hass, freezer, skipped - timedelta(seconds=20))
+    await settle(hass)
+    assert state(hass).state == STATE_ARMED
+    assert events[-1]["type"] == "skipped"
+    assert dt_util.parse_datetime(attr(hass, "next_fire")) - skipped == timedelta(days=1)
+    await tick_until(hass, freezer, skipped + timedelta(seconds=10))
+    assert not calls["light_on"]

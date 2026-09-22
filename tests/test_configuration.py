@@ -75,12 +75,20 @@ async def test_channel_mode_entire_lifecycle(hass, entry, freezer, calls, mode):
     await settle(hass)
     assert bool(calls["light_on"]) is (mode == "lights")
     assert bool(calls["play_media"]) is (mode == "music")
-    await call(hass, "snooze", duration_minutes=1)
-    await advance(hass, freezer, 60)
-    await settle(hass)
-    for _ in range(7):
-        await advance(hass, freezer, 5)
-    await advance(hass, freezer, 61)
+    if mode == "lights":
+        # A light alone cannot be snoozed; Stop ends the sunrise where it is.
+        assert attr(hass, "can_snooze") is False
+        assert attr(hass, "can_stop") is True
+        await call(hass, "snooze", duration_minutes=1)
+        assert state(hass).state == "rising"
+        await call(hass, "stop")
+    else:
+        await call(hass, "snooze", duration_minutes=1)
+        await advance(hass, freezer, 60)
+        await settle(hass)
+        for _ in range(7):
+            await advance(hass, freezer, 5)
+        await advance(hass, freezer, 61)
     assert state(hass).state == "armed"
     await call(hass, "trigger_now")
     await call(hass, "stop")

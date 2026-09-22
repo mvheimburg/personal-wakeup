@@ -8,12 +8,13 @@ Assistant playlist that fades in, and a real alarm-clock lifecycle with
 Choose **lights**, **music**, or **both** for each alarm.
 
 Pair it with the [Lovelace Personal Wakeup Card](https://github.com/mvheimburg/lovelace-personal-wakeup)
-for a one-tap Stop / Snooze UI.
+for a one-tap Stop / Snooze UI. Card **0.7.0** or later shows the wake-up brightness setting, the sunrise
+start and lights-only alarms without Snooze.
 
 ## How an alarm runs
 
 ```
-disarmed ─enable─▶ armed ─alarm time─▶ rising ─fades done─▶ ringing
+disarmed ─enable─▶ armed ─fade start─▶ rising ─fades done─▶ ringing
                      ▲                    │                    │
                      │      stop / auto-off (default 60 min)   │
                      ├────────────────────┴────────────────────┤
@@ -24,20 +25,32 @@ disarmed ─enable─▶ armed ─alarm time─▶ rising ─fades done─▶ ri
                                   └──▶ rising ─▶ ringing   (music at once, light stays)
 ```
 
-- **armed**: waiting for the next occurrence (`next_fire`).
-- **rising**: the light fades from its current brightness to 100% over
-  `fade_duration`. The music starts near the end of the light fade and ramps
-  to `volume` over `fade_music_duration`, centred on the moment the light
-  reaches full brightness.
+- **armed**: waiting for the next occurrence. `next_fire` is the alarm time;
+  `fade_start` is when the sunrise begins, `fade_duration` before it.
+- **rising**: a sunrise. The light fades from its current brightness to
+  `wake_brightness` (default 100%), arriving exactly at the alarm time. The
+  brightness follows a perceived-brightness curve (the square of the elapsed
+  share), so it stays dim for most of the fade instead of looking bright
+  within minutes. The music starts at the alarm time and ramps to `volume`
+  over `fade_music_duration`.
 - **ringing**: light and music are fully on. The alarm stays here until you
   stop it, snooze it, or `auto_off_minutes` elapse.
 - **snoozed**: music is stopped, the light is left as it is. When the snooze
   ends the music comes back within 30 seconds and the light is switched to
   full if it was turned off.
 - **stop** stops the music, leaves the light on, and arms the next occurrence.
+  During the sunrise it stops the fade where it is.
+- **lights only**: the sunrise is the whole alarm. When the light reaches
+  its level at the alarm time, the run is over (a `completed` event) and the
+  next occurrence is armed; there is no ringing state and no snooze. Stop is
+  offered only while the light is still rising.
 
-`time_of_day` is when the light starts fading, so with the default 15 minute
-fade a 07:00 alarm is fully on at 07:15.
+`time_of_day` is the wake time: the light is fully up and the music starts
+then. With the default 15 minute fade, a 07:00 alarm starts its sunrise at
+06:45. **Changed in 0.6.0**: before, `time_of_day` was when the fade started,
+so the light was fully on 15 minutes after the set time. An alarm set less
+than `fade_duration` ahead starts at once with a shorter sunrise. Stopping or
+skipping an occurrence during its sunrise does not start it again.
 
 A pending snooze and an interrupted run survive a Home Assistant restart.
 
@@ -69,9 +82,9 @@ All services target the sensor entity (`entity_id`, or device / area targets).
 
 | Service | Fields | What it does |
 | --- | --- | --- |
-| `personal_wakeup.set_config` | `enabled`, `time_of_day`, `day_times`, `weekdays`, `skip_next`, `fade_duration`, `fade_music_duration`, `volume`, `playlist`, `require_home`, `snooze_minutes`, `auto_off_minutes`, `light_entity`, `ma_player_entity`, `person_entity`, `person_entities`, `wake_mode` | Update settings. Disabling stops an active alarm. Changing mode, device or person selections stops an active alarm or pending snooze and saves the selection in integration options. Other changes preserve a pending snooze. |
-| `personal_wakeup.trigger_now` | | Start the wake-up sequence now, ignoring presence. |
-| `personal_wakeup.snooze` | `duration_minutes` (optional, default `snooze_minutes`) | Silence and ring again later. Only while rising, ringing or snoozed. |
+| `personal_wakeup.set_config` | `enabled`, `time_of_day`, `day_times`, `weekdays`, `skip_next`, `fade_duration`, `fade_music_duration`, `wake_brightness`, `volume`, `playlist`, `require_home`, `snooze_minutes`, `auto_off_minutes`, `light_entity`, `ma_player_entity`, `person_entity`, `person_entities`, `wake_mode` | Update settings. Disabling stops an active alarm. Changing mode, device or person selections stops an active alarm or pending snooze and saves the selection in integration options. Other changes preserve a pending snooze. |
+| `personal_wakeup.trigger_now` | | Start a full sunrise now, ignoring presence; the wake time is now plus `fade_duration`. |
+| `personal_wakeup.snooze` | `duration_minutes` (optional, default `snooze_minutes`) | Silence and ring again later. Only while rising, ringing or snoozed, and not in lights-only mode. |
 | `personal_wakeup.stop` | | Stop the alarm or cancel a snooze, arm the next occurrence. |
 
 `weekdays` is a list of `mon` … `sun`. An empty list means every day.
@@ -95,7 +108,7 @@ an empty string). If both fields are sent, `person_entities` wins. The sensor's
 
 `wake_mode` defaults to `both` for existing alarms. `lights` requires only a
 light and makes no media calls; `music` requires only a player and makes no
-light calls. Music-only playback begins immediately. Inactive targets may be
+light calls. Music-only playback begins at the alarm time. Inactive targets may be
 retained or cleared with an empty string. Send a mode change and its required
 targets together in one `set_config` call. Invalid combinations leave the old
 settings intact. Changing wiring or mode stops the old enabled player before
@@ -107,10 +120,14 @@ These configuration fields require integration and card version **0.4.0**.
 ## Attributes
 
 `enabled`, `time_of_day`, `day_times`, `weekdays`, `skip_next`, `fade_duration`,
-`fade_music_duration`, `volume`, `playlist`, `playlist_options`,
-`require_home`, `snooze_minutes`, `auto_off_minutes`, `next_fire`,
-`skipped_fire`, `snooze_until`, `run_started`, `person_entity`, `person_entities`, `wake_mode`,
+`fade_music_duration`, `wake_brightness`, `volume`, `playlist`, `playlist_options`,
+`require_home`, `snooze_minutes`, `auto_off_minutes`, `next_fire`, `fade_start`,
+`skipped_fire`, `snooze_until`, `run_started`, `wake_at`, `person_entity`, `person_entities`, `wake_mode`,
 `light_entity`, `player_entity`, `can_snooze`, `can_stop`.
+
+`wake_at` is the alarm time of the current (or last) run. `can_snooze` is
+always false in lights-only mode; `can_stop` there is true only while the
+light is rising.
 
 ## Events
 
@@ -119,8 +136,9 @@ Every transition fires a `personal_wakeup_event` on the event bus with
 
 | `type` | Extra data | When |
 | --- | --- | --- |
-| `triggered` | `resume` | A run starts (`resume: true` after a snooze) |
-| `ringing` | | Fades are complete |
+| `triggered` | `resume`, `wake_at` | A run starts (`resume: true` after a snooze) |
+| `ringing` | | Fades are complete (not in lights-only mode) |
+| `completed` | | Lights only: the light reached its wake-up brightness at the alarm time |
 | `snoozed` | `minutes`, `snooze_until` | Snooze pressed |
 | `stopped` | `reason`: `user` or `disabled` | Stop pressed or alarm disabled while active |
 | `auto_off` | | Auto-off timeout reached |

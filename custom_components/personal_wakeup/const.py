@@ -31,6 +31,7 @@ ATTR_PLAYLIST = "playlist"
 ATTR_REQUIRE_HOME = "require_home"
 ATTR_SNOOZE_MINUTES = "snooze_minutes"
 ATTR_AUTO_OFF_MINUTES = "auto_off_minutes"
+ATTR_WAKE_BRIGHTNESS = "wake_brightness"
 ATTR_DURATION_MINUTES = "duration_minutes"
 
 # Read-only attributes
@@ -39,6 +40,8 @@ ATTR_NEXT_FIRE = "next_fire"
 ATTR_SKIPPED_FIRE = "skipped_fire"
 ATTR_SNOOZE_UNTIL = "snooze_until"
 ATTR_RUN_STARTED = "run_started"
+ATTR_FADE_START = "fade_start"  # when the next run starts: the wake time minus the fade
+ATTR_WAKE_AT = "wake_at"  # the wake time of the current (or last) run
 ATTR_PERSON_ENTITY = "person_entity"
 ATTR_LIGHT_ENTITY = "light_entity"
 ATTR_PLAYER_ENTITY = "player_entity"
@@ -63,6 +66,7 @@ EVENT_SNOOZED = "snoozed"
 EVENT_STOPPED = "stopped"
 EVENT_SKIPPED = "skipped"
 EVENT_AUTO_OFF = "auto_off"
+EVENT_COMPLETED = "completed"  # lights only: the light reached its wake-up brightness
 
 # Defaults
 DEFAULT_TIME_OF_DAY = "07:00"
@@ -72,6 +76,7 @@ DEFAULT_VOLUME = 0.25
 DEFAULT_SNOOZE_MINUTES = 10
 DEFAULT_AUTO_OFF_MINUTES = 60
 DEFAULT_ENABLED = True
+DEFAULT_WAKE_BRIGHTNESS = 100  # percent
 
 # Fade behaviour
 FADE_STEP_SECONDS = 5
