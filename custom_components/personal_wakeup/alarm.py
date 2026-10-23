@@ -26,13 +26,17 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     SERVICE_VOLUME_SET,
     STATE_HOME,
+    STATE_OFF,
     STATE_ON,
     WEEKDAYS,
 )
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.event import async_track_point_in_utc_time
+from homeassistant.helpers.event import (
+    async_track_point_in_utc_time,
+    async_track_state_change_event,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
@@ -762,12 +766,38 @@ class WakeupAlarmEntity(RestoreEntity, Entity):
             target,
             duration,
         )
-        for step in range(1, steps + 1):
-            share = step / steps
-            brightness = max(1, start + round((target - start) * share * share))
-            await self._light_turn_on(brightness, FADE_STEP_SECONDS)
-            if step < steps:
-                await asyncio.sleep(FADE_STEP_SECONDS)
+        stopping = False
+
+        async def light_changed(event: Event[EventStateChangedData]) -> None:
+            nonlocal stopping
+            old_state = event.data["old_state"]
+            new_state = event.data["new_state"]
+            if (
+                stopping
+                or old_state is None
+                or old_state.state != STATE_ON
+                or new_state is None
+                or new_state.state != STATE_OFF
+            ):
+                return
+            stopping = True
+            _LOGGER.info("%s: light switched off during sunrise; stopping wakeup", self.entity_id)
+            await self.async_stop()
+
+        unsubscribe = async_track_state_change_event(self.hass, self._light_entity, light_changed)
+        try:
+            for step in range(1, steps + 1):
+                share = step / steps
+                brightness = max(1, start + round((target - start) * share * share))
+                await self._light_turn_on(brightness, FADE_STEP_SECONDS)
+                if step < steps:
+                    await asyncio.sleep(FADE_STEP_SECONDS)
+            # The final command starts a transition too. Keep watching until
+            # the wake time, rather than declaring the sunrise complete early.
+            await asyncio.sleep(max(0, (wake_at - dt_util.utcnow()).total_seconds()))
+        finally:
+            stopping = True
+            unsubscribe()
 
     # ------------------------------------------------------------------ #
     # Music

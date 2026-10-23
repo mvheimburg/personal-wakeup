@@ -558,6 +558,109 @@ async def test_stop_during_sunrise_keeps_the_light_and_does_not_restart(
     assert not calls["play_media"]
 
 
+@pytest.mark.parametrize("wake_mode", ["both", "lights"])
+@pytest.mark.parametrize("seconds_into_fade", [5, 16])
+async def test_light_switched_off_stops_the_whole_sunrise(
+    hass, entry, freezer, calls, events, wake_mode, seconds_into_fade
+) -> None:
+    await arm_fast(hass, entry, wake_mode=wake_mode)
+    wake = dt_util.parse_datetime(attr(hass, "next_fire"))
+    await jump_to(hass, freezer, dt_util.parse_datetime(attr(hass, "fade_start")))
+    await settle(hass)
+    # Service mocks do not update the light: report its actual response.
+    hass.states.async_set(LIGHT, "on", {"brightness": 10})
+    await settle(hass)
+    await tick_until(
+        hass, freezer, dt_util.utcnow() + timedelta(seconds=seconds_into_fade), step=1
+    )
+    light_calls = len(calls["light_on"])
+
+    hass.states.async_set(LIGHT, "off")
+    await settle(hass)
+
+    assert state(hass).state == STATE_ARMED
+    assert hass.states.get(LIGHT).state == "off"
+    assert [e["type"] for e in events] == ["triggered", "stopped"]
+    assert len(calls["media_stop"]) == (1 if wake_mode == "both" else 0)
+    assert dt_util.parse_datetime(attr(hass, "next_fire")) - wake == timedelta(days=1)
+    await tick_until(hass, freezer, wake + timedelta(seconds=30))
+    assert len(calls["light_on"]) == light_calls
+    assert not calls["play_media"]
+
+
+@pytest.mark.parametrize("wake_mode", ["both", "lights", "music"])
+async def test_sunrise_ignores_initial_off_unavailability_and_other_lights(
+    hass, entry, freezer, calls, events, wake_mode
+) -> None:
+    await arm_fast(hass, entry, wake_mode=wake_mode)
+    await call(hass, "trigger_now")
+    await settle(hass)
+    assert state(hass).state == STATE_RISING
+    hass.states.async_set("light.other", "on")
+    hass.states.async_set("light.other", "off")
+    hass.states.async_set(LIGHT, "on", {"brightness": 10})
+    await settle(hass)
+    hass.states.async_set(LIGHT, "on", {"brightness": 20})
+    hass.states.async_set(LIGHT, "unavailable")
+    await settle(hass)
+    hass.states.async_set(LIGHT, "off")
+    await settle(hass)
+    assert state(hass).state == STATE_RISING
+    assert [e["type"] for e in events] == ["triggered"]
+    if wake_mode == "music":
+        hass.states.async_set(LIGHT, "on")
+        await settle(hass)
+        hass.states.async_set(LIGHT, "off")
+        await settle(hass)
+        assert state(hass).state == STATE_RISING
+    await call(hass, "stop")
+
+
+async def test_light_off_after_sunrise_does_not_stop_music_ramp(
+    hass, entry, freezer, calls, events
+) -> None:
+    await arm_fast(hass, entry)
+    wake = dt_util.parse_datetime(attr(hass, "next_fire"))
+    await jump_to(hass, freezer, dt_util.parse_datetime(attr(hass, "fade_start")))
+    await settle(hass)
+    hass.states.async_set(LIGHT, "on", {"brightness": 10})
+    await settle(hass)
+    await tick_until(hass, freezer, wake)
+    assert calls["play_media"]
+    hass.states.async_set(LIGHT, "off")
+    await settle(hass)
+    assert not calls["media_stop"]
+    await tick_until(hass, freezer, wake + timedelta(seconds=10))
+    assert state(hass).state == STATE_RINGING
+    assert [e["type"] for e in events] == ["triggered", "ringing"]
+    await call(hass, "stop")
+
+
+@pytest.mark.parametrize("action", ["stop", "snooze", "unload"])
+async def test_light_monitor_is_removed_when_sunrise_is_cancelled(
+    hass, entry, calls, events, action
+) -> None:
+    await arm_fast(hass, entry)
+    await call(hass, "trigger_now")
+    await settle(hass)
+    hass.states.async_set(LIGHT, "on", {"brightness": 10})
+    await settle(hass)
+    if action == "unload":
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await settle(hass)
+    else:
+        await call(hass, action)
+    previous_state = state(hass).state
+    previous_events = list(events)
+    previous_stop_count = len(calls["media_stop"])
+
+    hass.states.async_set(LIGHT, "off")
+    await settle(hass)
+    assert state(hass).state == previous_state
+    assert events == previous_events
+    assert len(calls["media_stop"]) == previous_stop_count
+
+
 async def test_alarm_set_inside_the_fade_starts_now_with_a_shorter_sunrise(
     hass, entry, freezer, calls
 ) -> None:

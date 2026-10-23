@@ -40,6 +40,11 @@ disarmed ─enable─▶ armed ─fade start─▶ rising ─fades done─▶ ri
   full if it was turned off.
 - **stop** stops the music, leaves the light on, and arms the next occurrence.
   During the sunrise it stops the fade where it is.
+- **Switching the light off during the sunrise** stops the whole current
+  wakeup, including upcoming music, and arms the next occurrence. The light
+  stays off. This works with a switch, another dashboard or an automation when
+  Home Assistant reports the selected light changing from on to off. A light
+  that starts off, or becomes unavailable, does not cancel the wakeup.
 - **lights only**: the sunrise is the whole alarm. When the light reaches
   its level at the alarm time, the run is over (a `completed` event) and the
   next occurrence is armed; there is no ringing state and no snooze. Stop is
@@ -140,7 +145,7 @@ Every transition fires a `personal_wakeup_event` on the event bus with
 | `ringing` | | Fades are complete (not in lights-only mode) |
 | `completed` | | Lights only: the light reached its wake-up brightness at the alarm time |
 | `snoozed` | `minutes`, `snooze_until` | Snooze pressed |
-| `stopped` | `reason`: `user` or `disabled` | Stop pressed or alarm disabled while active |
+| `stopped` | `reason`: `user` or `disabled` | Stop pressed, sunrise light switched off (`user`), or alarm disabled while active |
 | `auto_off` | | Auto-off timeout reached |
 | `skipped` | `reason`: `skip_next` or `not_home`, `fire_time` | An occurrence was skipped |
 
